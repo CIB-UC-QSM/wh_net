@@ -15,29 +15,29 @@ from dataset import QSMDataset
 
 # ----------------------------- Configuracion -----------------------------
 # --- Etapa 2: continuacion del entrenamiento anterior ---
-INIT_CKPT       = "checkpoints1/model_last.pth"   # pesos FINALES del run anterior
+INIT_CKPT       = "checkpoints_stage2/model_best.pth"   # pesos FINALES del run anterior
                                                  # (alternativa: checkpoints/model_best.pth)
-CKPT_DIR        = "checkpoints_stage2"           # carpeta NUEVA para esta etapa
+CKPT_DIR        = "checkpoints_stage3"           # carpeta NUEVA para esta etapa
 
-EPOCHS          = 100
+EPOCHS          = 10
 BATCH_SIZE      = 5
 PEAK_LR         = 5e-5      # mas bajo que el run anterior: esto es fine-tuning, no de cero
 MIN_LR_FACTOR   = 0.05      # LR final = PEAK_LR * MIN_LR_FACTOR (coseno)
-WARMUP_EPOCHS   = 2         # rampa lineal de LR (corta: el modelo ya esta entrenado)
-WH_WARMUP_EPOCHS = 3        # corto: el modelo ya aprendio el termino WH
+WARMUP_EPOCHS   = 1         # rampa lineal de LR (corta: el modelo ya esta entrenado)
+WH_WARMUP_EPOCHS = 1       # corto: el modelo ya aprendio el termino WH
 LAM_WH          = 1000.0    # peso objetivo del termino WH
 
 # --- Iteraciones del ADMM desenrollado (NIVEL 1: robustez a la profundidad) ---
-NUM_ITERS_MAX   = 20        # objetivo de produccion (referencia)
-ITER_START      = 10         # arranque del curriculum (donde quedo el run anterior)
-ITER_MIN        = 10         # cota INFERIOR del muestreo aleatorio por batch
-ITER_SAMPLE_MAX = 25        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
-ITER_RAMP_EPOCHS = 80       # epocas para subir la cota superior de ITER_START a ITER_SAMPLE_MAX
+NUM_ITERS_MAX   = 50        # objetivo de produccion (referencia)
+ITER_START      = 50         # arranque del curriculum (donde quedo el run anterior)
+ITER_MIN        = 50         # cota INFERIOR del muestreo aleatorio por batch
+ITER_SAMPLE_MAX = 50        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
+ITER_RAMP_EPOCHS = 1       # epocas para subir la cota superior de ITER_START a ITER_SAMPLE_MAX
 DEEP_SUP_K      = 4         # nº de iterados intermedios supervisados (supervision profunda)
 
 # --- Inferencia / produccion: iteracion adaptativa con criterio de parada ---
-EVAL_TOL        = 0.1      # parar cuando ||chi_k - chi_{k-1}|| / ||chi_k|| < tol
-EVAL_MAX_ITERS  = 30        # tope de seguridad (puede exceder NUM_ITERS_MAX)
+EVAL_TOL        = 0.01      # parar cuando ||chi_k - chi_{k-1}|| / ||chi_k|| < tol
+EVAL_MAX_ITERS  = 55        # tope de seguridad (puede exceder NUM_ITERS_MAX)
 
 GRAD_CLIP       = 0.9       # mas estricto: el desenrollado profundo da gradientes mayores
 EMA_DECAY       = 0.999     # promedio movil exponencial de pesos
@@ -84,7 +84,7 @@ def weak_harmonic_loss(phi, mask):
 
 
 def hybrid_qsm_loss(chi_pred, chi_gt, phi_pred, phi_gt, mask,
-                    lam_chi=100.0, lam_phi=1.0, lam_grad=1.0, lam_wh=1000.0):
+                    lam_chi=500.0, lam_phi=1.0, lam_grad=1.0, lam_wh=1000.0):
     loss_chi = F.l1_loss(chi_pred * mask, chi_gt * mask)
     loss_phi = F.l1_loss(phi_pred * mask, phi_gt * mask)
     loss_grad = gradient_loss(chi_pred, chi_gt, mask)
