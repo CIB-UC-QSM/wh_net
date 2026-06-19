@@ -14,33 +14,34 @@ from wh_net import ProximalNetwork, ADMMUnrolledNet
 from dataset import QSMDataset
 
 # ----------------------------- Configuracion -----------------------------
-# --- Etapa 2: continuacion del entrenamiento anterior ---
-INIT_CKPT       = "checkpoints_stage2/model_best.pth"   # pesos FINALES del run anterior
-                                                 # (alternativa: checkpoints/model_best.pth)
-CKPT_DIR        = "checkpoints_stage3"           # carpeta NUEVA para esta etapa
+# --- Entrenamiento DESDE CERO (sin warm-start) ---
+INIT_CKPT       = "checkpoints_scratch2/model_best.pth"                  # None = desde cero. (La arquitectura bias-free /
+                                        # ScaleNorm hace que los checkpoints viejos ya no
+                                        # sean cargables; reanudar requeriria un ckpt nuevo.)
+CKPT_DIR        = "checkpoints_scratch2" # carpeta para esta corrida
 
-EPOCHS          = 10
+EPOCHS          = 100
 BATCH_SIZE      = 5
-PEAK_LR         = 5e-5      # mas bajo que el run anterior: esto es fine-tuning, no de cero
-MIN_LR_FACTOR   = 0.05      # LR final = PEAK_LR * MIN_LR_FACTOR (coseno)
-WARMUP_EPOCHS   = 1         # rampa lineal de LR (corta: el modelo ya esta entrenado)
-WH_WARMUP_EPOCHS = 1       # corto: el modelo ya aprendio el termino WH
-LAM_WH          = 1000.0    # peso objetivo del termino WH
+PEAK_LR         = 0.5e-4      # desde cero: LR mas alto que en fine-tuning
+MIN_LR_FACTOR   = 0.1       # LR final = PEAK_LR * MIN_LR_FACTOR (coseno)
+WARMUP_EPOCHS   = 0        # rampa lineal de LR
+WH_WARMUP_EPOCHS = 5       # mas largo: el modelo aun no aprendio el termino WH
+LAM_WH          = 1500.0    # peso objetivo del termino WH
 
 # --- Iteraciones del ADMM desenrollado (NIVEL 1: robustez a la profundidad) ---
-NUM_ITERS_MAX   = 50        # objetivo de produccion (referencia)
-ITER_START      = 50         # arranque del curriculum (donde quedo el run anterior)
-ITER_MIN        = 50         # cota INFERIOR del muestreo aleatorio por batch
-ITER_SAMPLE_MAX = 50        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
+NUM_ITERS_MAX   = 30        # objetivo de produccion (referencia)
+ITER_START      = 30        # arranque del curriculum (red sin entrenar -> empieza poco profundo)
+ITER_MIN        = 30        # cota INFERIOR del muestreo aleatorio por batch
+ITER_SAMPLE_MAX = 35        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
 ITER_RAMP_EPOCHS = 1       # epocas para subir la cota superior de ITER_START a ITER_SAMPLE_MAX
-DEEP_SUP_K      = 4         # nº de iterados intermedios supervisados (supervision profunda)
+DEEP_SUP_K      = 10         # nº de iterados intermedios supervisados (supervision profunda)
 
 # --- Inferencia / produccion: iteracion adaptativa con criterio de parada ---
-EVAL_TOL        = 0.01      # parar cuando ||chi_k - chi_{k-1}|| / ||chi_k|| < tol
-EVAL_MAX_ITERS  = 55        # tope de seguridad (puede exceder NUM_ITERS_MAX)
+EVAL_TOL        = 1e-3      # parar cuando ||chi_k - chi_{k-1}|| / ||chi_k|| < tol
+EVAL_MAX_ITERS  = 50        # tope de seguridad (puede exceder NUM_ITERS_MAX)
 
-GRAD_CLIP       = 0.9       # mas estricto: el desenrollado profundo da gradientes mayores
-EMA_DECAY       = 0.999     # promedio movil exponencial de pesos
+GRAD_CLIP       = 0.8       # mas estricto: el desenrollado profundo da gradientes mayores
+EMA_DECAY       = 0.9     # promedio movil exponencial de pesos
 VAL_FRAC        = 0.1       # fraccion para validacion (split por volumen)
 LOSS_SPIKE      = 1000.0    # umbral para descartar batches inestables
 SEED            = 0
@@ -84,7 +85,7 @@ def weak_harmonic_loss(phi, mask):
 
 
 def hybrid_qsm_loss(chi_pred, chi_gt, phi_pred, phi_gt, mask,
-                    lam_chi=500.0, lam_phi=1.0, lam_grad=1.0, lam_wh=1000.0):
+                    lam_chi=1000.0, lam_phi=1.0, lam_grad=1.0, lam_wh=1000.0):
     loss_chi = F.l1_loss(chi_pred * mask, chi_gt * mask)
     loss_phi = F.l1_loss(phi_pred * mask, phi_gt * mask)
     loss_grad = gradient_loss(chi_pred, chi_gt, mask)
@@ -170,7 +171,7 @@ def evaluate(model, loader, device):
 if __name__ == "__main__":
     experiment = Experiment(project_name="wh-net-qsm")
     experiment.log_parameters({
-        "stage": 2, "init_ckpt": INIT_CKPT, "ckpt_dir": CKPT_DIR,
+        "mode": "from_scratch", "init_ckpt": str(INIT_CKPT), "ckpt_dir": CKPT_DIR,
         "epochs": EPOCHS, "batch_size": BATCH_SIZE, "peak_lr": PEAK_LR,
         "warmup_epochs": WARMUP_EPOCHS, "wh_warmup_epochs": WH_WARMUP_EPOCHS,
         "lam_wh": LAM_WH, "grad_clip": GRAD_CLIP, "ema_decay": EMA_DECAY,
@@ -188,11 +189,13 @@ if __name__ == "__main__":
     # mask_chi=True: los datos se generan con chi*mask, asi que es consistente.
     model = ADMMUnrolledNet(net_chi, net_phi, num_iters=ITER_START, mask_chi=True).to(device)
 
-    # --- Warm-start: cargar los pesos finales del entrenamiento anterior ---
-    assert os.path.isfile(INIT_CKPT), f"No se encontro el checkpoint inicial: {INIT_CKPT}"
-    state = torch.load(INIT_CKPT, map_location=device)
-    model.load_state_dict(state, strict=True)
-    print(f"Pesos iniciales cargados desde {INIT_CKPT}")
+    # --- Warm-start opcional. Por defecto (INIT_CKPT=None) se entrena DESDE CERO. ---
+    if INIT_CKPT is not None:
+        assert os.path.isfile(INIT_CKPT), f"No se encontro el checkpoint inicial: {INIT_CKPT}"
+        model.load_state_dict(torch.load(INIT_CKPT, map_location=device), strict=True)
+        print(f"Pesos iniciales cargados desde {INIT_CKPT}")
+    else:
+        print("Entrenamiento desde cero (sin warm-start)")
 
     # NOTA: Adam sin weight_decay a proposito (penalizarlo empujaria alpha y rho hacia 0).
     optimizer = optim.Adam(model.parameters(), lr=PEAK_LR)
