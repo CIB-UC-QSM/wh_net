@@ -26,32 +26,34 @@ class QSMDataset(Dataset):
 
     def __getitem__(self, idx):
         chi = torch.load(self.chi_files[idx]).float()
-        msk = torch.load(self.msk_files[idx]).float()          # se guardo como long -> a float
+        msk = torch.load(self.msk_files[idx]).float() 
+        perm = torch.randperm(3)
+        dims = (0, int(perm[0]) + 1, int(perm[1]) + 1, int(perm[2]) + 1)
+        chi = chi.permute(dims).contiguous()
+        msk = msk.permute(dims).contiguous()
 
-        # Peso de fidelidad. Actualmente es la mascara binaria: NO aporta ponderacion
-        # por SNR/magnitud (a diferencia de W=magnitud en WH_wTV). Para fidelidad
-        # espacialmente variable habria que simular/cargar una magnitud aqui.
+
+        flip_dims = [d for d in (1, 2, 3) if torch.rand(1).item() < 0.5]
+        if flip_dims:
+            chi = torch.flip(chi, dims=flip_dims).contiguous()
+            msk = torch.flip(msk, dims=flip_dims).contiguous()
+
         W = msk.clone()
 
-        # --- Campo local de tejido: D * (chi dentro del cerebro) ---
         chi_k = torch.fft.fftn(chi * msk, dim=SPATIAL)
         local = torch.real(torch.fft.ifftn(self.D * chi_k, dim=SPATIAL)) * msk
 
-        # --- Campo de fondo (armonico dentro de la mascara): dipolo de fuentes externas ---
-        # Se dilata la mascara 3 voxeles para dejar un margen sin fuentes, de modo que
-        # el campo resultante sea armonico (Laplace=0) dentro del cerebro.
         msk_dil = F.max_pool3d(msk.unsqueeze(0), kernel_size=7, stride=1, padding=3).squeeze(0)
-        scale = torch.empty(1).uniform_(1, 2).item()
+        scale = torch.empty(1).uniform_(0.1, 6).item()
         ext_k = torch.fft.fftn((1.0 - msk_dil) * scale, dim=SPATIAL)
         phi = torch.real(torch.fft.ifftn(self.D * ext_k, dim=SPATIAL)) * msk
 
-        # --- Ruido (relativo al campo local), referido al modelo phase = local + phi + ruido ---
         inside = msk > 0
         if inside.sum() > 1:
             field_std = torch.std(local[inside])
         else:
             field_std = torch.tensor(0.0)
-        snr = torch.empty(1).uniform_(90, 100).item()
+        snr = torch.empty(1).uniform_(30, 100).item()
         noise_std = field_std / snr
         phase = msk * (local + torch.randn_like(local) * noise_std + phi)
 
