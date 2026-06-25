@@ -1,4 +1,5 @@
-from comet_ml import Experiment   # debe importarse antes que torch
+#%%
+from comet_ml import Experiment
 import os
 import math
 import numpy as np
@@ -15,44 +16,47 @@ from dataset import QSMDataset
 
 # ----------------------------- Configuracion -----------------------------
 # --- Entrenamiento DESDE CERO (sin warm-start) ---
-INIT_CKPT       = "checkpoints_scratch2/model_best.pth"                  # None = desde cero. (La arquitectura bias-free /
-                                        # ScaleNorm hace que los checkpoints viejos ya no
-                                        # sean cargables; reanudar requeriria un ckpt nuevo.)
-CKPT_DIR        = "checkpoints_scratch2" # carpeta para esta corrida
+INIT_CKPT       = 'checkpoints_scratch4/model_best.pth'               # None = desde cero. La normalizacion espectral
+                                        # (parametrizations.weight.original + buffers _u/_v)
+                                        # y el MLP de rho cambian el state_dict: los
+                                        # checkpoints previos NO cargan con strict=True.
+CKPT_DIR        = "checkpoints_scratch4" # carpeta para esta corrida
 
-EPOCHS          = 100
+EPOCHS          = 300
 BATCH_SIZE      = 5
-PEAK_LR         = 0.5e-4      # desde cero: LR mas alto que en fine-tuning
+PEAK_LR         = 1e-4      # subido: 0.5e-4 era demasiado bajo para mover el warm-start
 MIN_LR_FACTOR   = 0.1       # LR final = PEAK_LR * MIN_LR_FACTOR (coseno)
-WARMUP_EPOCHS   = 0        # rampa lineal de LR
-WH_WARMUP_EPOCHS = 5       # mas largo: el modelo aun no aprendio el termino WH
-LAM_WH          = 1500.0    # peso objetivo del termino WH
+WARMUP_EPOCHS   = 2         # warmup corto: evita que el primer paso desestabilice el warm-start
+WH_WARMUP_EPOCHS = 5        # mas largo: el modelo aun no aprendio el termino WH
+LAM_WH          = 1000.0      # BAJADO: para ENFATIZAR chi, lam_chi debe dominar a lam_wh
 
 # --- Iteraciones del ADMM desenrollado (NIVEL 1: robustez a la profundidad) ---
-NUM_ITERS_MAX   = 30        # objetivo de produccion (referencia)
-ITER_START      = 30        # arranque del curriculum (red sin entrenar -> empieza poco profundo)
-ITER_MIN        = 30        # cota INFERIOR del muestreo aleatorio por batch
-ITER_SAMPLE_MAX = 35        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
-ITER_RAMP_EPOCHS = 1       # epocas para subir la cota superior de ITER_START a ITER_SAMPLE_MAX
+NUM_ITERS_MAX   = 20        # objetivo de produccion (referencia)
+ITER_START      = 10        # warm-start de un modelo ya entrenado a 30 -> se mantiene 30
+ITER_MIN        = 10        # cota INFERIOR del muestreo aleatorio por batch
+ITER_SAMPLE_MAX = 20        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
+ITER_RAMP_EPOCHS = 10       # epocas para subir la cota superior de ITER_START a ITER_SAMPLE_MAX
 DEEP_SUP_K      = 10         # nº de iterados intermedios supervisados (supervision profunda)
 
 # --- Inferencia / produccion: iteracion adaptativa con criterio de parada ---
 EVAL_TOL        = 1e-3      # parar cuando ||chi_k - chi_{k-1}|| / ||chi_k|| < tol
-EVAL_MAX_ITERS  = 50        # tope de seguridad (puede exceder NUM_ITERS_MAX)
+EVAL_MAX_ITERS  = 25        # tope de seguridad (puede exceder NUM_ITERS_MAX)
 
-GRAD_CLIP       = 0.8       # mas estricto: el desenrollado profundo da gradientes mayores
-EMA_DECAY       = 0.9     # promedio movil exponencial de pesos
+GRAD_CLIP       = 1.0       # el clip ACOTA el paso de los batches dificiles (en vez de descartarlos)
+EMA_DECAY       = 0.9     # promedio movil exponencial de peso
 VAL_FRAC        = 0.1       # fraccion para validacion (split por volumen)
-LOSS_SPIKE      = 1000.0    # umbral para descartar batches inestables
 SEED            = 0
 # --------------------------------------------------------------------------
 
-torch.backends.cudnn.benchmark = True  # tamaños de entrada fijos (160^3)
+torch.backends.cudnn.benchmark = True
+
 
 _LAP_KERNEL = torch.tensor(
-    [[[[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]],
-       [[0.0, 1.0, 0.0], [1.0, -6.0, 1.0], [0.0, 1.0, 0.0]],
-       [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]]]]
+    [[[
+        [[1/13, 3/26, 1/13], [3/26, 3/13, 3/26], [1/13, 3/26, 1/13]],
+        [[3/26, 3/13, 3/26], [3/13, -44/13, 3/13], [3/26, 3/13, 3/26]],
+        [[1/13, 3/26, 1/13], [3/26, 3/13, 3/26], [1/13, 3/26, 1/13]],
+    ]]]
 )
 
 
@@ -85,7 +89,7 @@ def weak_harmonic_loss(phi, mask):
 
 
 def hybrid_qsm_loss(chi_pred, chi_gt, phi_pred, phi_gt, mask,
-                    lam_chi=1000.0, lam_phi=1.0, lam_grad=1.0, lam_wh=1000.0):
+                    lam_chi=1500.0, lam_phi=1.0, lam_grad=1.0, lam_wh=10.0):
     loss_chi = F.l1_loss(chi_pred * mask, chi_gt * mask)
     loss_phi = F.l1_loss(phi_pred * mask, phi_gt * mask)
     loss_grad = gradient_loss(chi_pred, chi_gt, mask)
@@ -120,18 +124,24 @@ def deep_supervised_loss(iterates, chi_gt, phi_gt, mask, lam_wh):
 
 
 class EMA:
-    """Promedio movil exponencial de los pesos. Mejora la estabilidad del modelo final."""
+    """Promedio movil exponencial de los PARAMETROS. Los buffers (p. ej. los
+    vectores _u/_v de la iteracion de potencia de la normalizacion espectral) NO se
+    promedian: se copian los ultimos. Promediar esos vectores los saca de norma
+    unitaria y descalibra la estimacion de sigma -> al validar con los pesos EMA el
+    peso normalizado quedaria mal escalado. InstanceNorm3d aqui no lleva running
+    stats (track_running_stats=False), asi que no hay buffers de norm que promediar."""
     def __init__(self, model, decay):
         self.decay = decay
+        self.param_names = {n for n, _ in model.named_parameters()}
         self.shadow = {k: v.detach().clone() for k, v in model.state_dict().items()}
 
     @torch.no_grad()
     def update(self, model):
         for k, v in model.state_dict().items():
-            if v.dtype.is_floating_point:
+            if k in self.param_names and v.dtype.is_floating_point:
                 self.shadow[k].mul_(self.decay).add_(v.detach(), alpha=1.0 - self.decay)
             else:
-                self.shadow[k].copy_(v)
+                self.shadow[k].copy_(v)   # buffers / no-flotantes: copia directa
 
 
 def log_ortho_slices(experiment, vol, name, epoch, rango=(-0.1, 0.1)):
@@ -186,10 +196,8 @@ if __name__ == "__main__":
 
     net_chi = ProximalNetwork().to(device)
     net_phi = ProximalNetwork().to(device)
-    # mask_chi=True: los datos se generan con chi*mask, asi que es consistente.
-    model = ADMMUnrolledNet(net_chi, net_phi, num_iters=ITER_START, mask_chi=True).to(device)
+    model = ADMMUnrolledNet(net_chi, net_phi, num_iters=ITER_START).to(device)
 
-    # --- Warm-start opcional. Por defecto (INIT_CKPT=None) se entrena DESDE CERO. ---
     if INIT_CKPT is not None:
         assert os.path.isfile(INIT_CKPT), f"No se encontro el checkpoint inicial: {INIT_CKPT}"
         model.load_state_dict(torch.load(INIT_CKPT, map_location=device), strict=True)
@@ -197,10 +205,8 @@ if __name__ == "__main__":
     else:
         print("Entrenamiento desde cero (sin warm-start)")
 
-    # NOTA: Adam sin weight_decay a proposito (penalizarlo empujaria alpha y rho hacia 0).
     optimizer = optim.Adam(model.parameters(), lr=PEAK_LR)
 
-    # Split por volumen: las muestras de validacion usan chi/mask nunca vistos.
     full = QSMDataset()
     n_val = max(1, int(len(full) * VAL_FRAC))
     n_train = len(full) - n_val
@@ -208,9 +214,9 @@ if __name__ == "__main__":
                                       generator=torch.Generator().manual_seed(SEED))
     pin = torch.cuda.is_available()
     train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True,
-                              drop_last=True, num_workers=2, pin_memory=pin)
+                              drop_last=True, num_workers=5, pin_memory=pin)
     val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False,
-                            num_workers=2, pin_memory=pin)
+                            num_workers=5, pin_memory=pin)
 
     steps_per_epoch = max(1, len(train_loader))
     total_steps = steps_per_epoch * EPOCHS
@@ -220,7 +226,7 @@ if __name__ == "__main__":
         if step < warmup_steps:
             return (step + 1) / max(1, warmup_steps)
         progress = min(1.0, (step - warmup_steps) / max(1, total_steps - warmup_steps))
-        return MIN_LR_FACTOR + (1 - MIN_LR_FACTOR) * 0.5 * (1 + math.cos(math.pi * progress))
+        return MIN_LR_FACTOR + (1 - MIN_LR_FACTOR) * 0.5 * (1 + math.cos(math.pi * progress / 2))
 
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     ema = EMA(model, EMA_DECAY)
@@ -232,10 +238,10 @@ if __name__ == "__main__":
     for epoch in range(EPOCHS):
         wh_factor = min(1.0, epoch / max(1, WH_WARMUP_EPOCHS))
         k_hi = iter_upper_for_epoch(epoch)   # cota superior del muestreo en esta epoca
+        skipped = 0                          # batches realmente descartados (loss NaN/Inf)
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} (iters<={k_hi})")
         for phase, mask, W, D, chi_gt, phi_gt in pbar:
-            # NIVEL 1: numero de iteraciones ALEATORIO por batch (robustez a la profundidad)
             model.num_iters = int(torch.randint(ITER_MIN, k_hi + 1, (1,)).item())
 
             phase, mask, W, D = phase.to(device), mask.to(device), W.to(device), D.to(device)
@@ -244,21 +250,22 @@ if __name__ == "__main__":
             optimizer.zero_grad(set_to_none=True)
 
             with autocast("cuda", dtype=torch.bfloat16):
-                # NIVEL 1: supervision profunda sobre iterados intermedios
                 iterates = model(phase, mask, D, W, return_iterates=True)
                 loss, parts = deep_supervised_loss(iterates, chi_gt, phi_gt, mask,
                                                    lam_wh=LAM_WH * wh_factor)
                 chi_pred, phi_pred = iterates[-1]   # salida final (para metricas)
 
-            if not torch.isfinite(loss) or loss.item() > LOSS_SPIKE:
+
+            if not torch.isfinite(loss):
+                skipped += 1
                 optimizer.zero_grad(set_to_none=True)
                 continue
 
             loss.backward()
+            for p in model.parameters():        # sanear gradientes raros -> no descartar el batch
+                if p.grad is not None:
+                    torch.nan_to_num_(p.grad, nan=0.0, posinf=0.0, neginf=0.0)
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
-            if not torch.isfinite(grad_norm):
-                optimizer.zero_grad(set_to_none=True)
-                continue
 
             optimizer.step()
             scheduler.step()
@@ -274,9 +281,7 @@ if __name__ == "__main__":
             experiment.log_metric("lr", scheduler.get_last_lr()[0], step=global_step)
             experiment.log_metric("grad_norm", grad_norm.item(), step=global_step)
             experiment.log_metric("num_iters", model.num_iters, step=global_step)
-            experiment.log_metric("rho_y", F.softplus(model.rho_y).item(), step=global_step)
-            experiment.log_metric("rho_u", F.softplus(model.rho_u).item(), step=global_step)
-            experiment.log_metric("rho_v", F.softplus(model.rho_v).item(), step=global_step)
+
             for k, v in parts.items():
                 experiment.log_metric(k, v, step=global_step)
 
@@ -287,7 +292,8 @@ if __name__ == "__main__":
                              lr=f"{scheduler.get_last_lr()[0]:.1e}")
             global_step += 1
 
-        # ---------------- Validacion (con pesos EMA, iteracion adaptativa) ----------------
+        experiment.log_metric("skipped_frac", skipped / max(1, steps_per_epoch), step=global_step)
+
         backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
         model.load_state_dict(ema.shadow, strict=True)
         val_chi, val_phi = evaluate(model, val_loader, device)
@@ -305,7 +311,6 @@ if __name__ == "__main__":
         if (epoch + 1) % 10 == 0:
             torch.save(model.state_dict(), os.path.join(CKPT_DIR, f"model_epoch_{epoch+1}.pth"))
 
-        # imagenes cada 5 epocas (con pesos EMA, iteracion adaptativa como en produccion)
         if (epoch + 1) % 5 == 0:
             model.load_state_dict(ema.shadow, strict=True)
             model.eval()
@@ -314,12 +319,13 @@ if __name__ == "__main__":
                                            tol=EVAL_TOL, max_iters=EVAL_MAX_ITERS)
             for vol, name in [(phase, 'phase_in'), (chi_pred, 'chi_pred'),
                               (phi_pred, 'phih_pred'), (chi_gt, 'chi_gt'), (phi_gt, 'phih_gt')]:
-                log_ortho_slices(experiment, vol.detach().cpu().numpy()[0, 0], name, epoch + 1)
+                log_ortho_slices(experiment, (vol*mask).detach().cpu().numpy()[0, 0], name, epoch + 1)
             model.load_state_dict(backup, strict=True)
             model.train()
 
-    # Evaluacion final con el mejor modelo (EMA)
     model.load_state_dict(torch.load(os.path.join(CKPT_DIR, "model_best.pth")), strict=True)
     val_chi, val_phi = evaluate(model, val_loader, device)
     print(f"[BEST EMA] Val NRMSE Chi: {val_chi:.4f} | Val NRMSE Phi: {val_phi:.4f}")
     experiment.end()
+
+# %%
