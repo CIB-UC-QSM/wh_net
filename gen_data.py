@@ -46,6 +46,22 @@ def save_volumes_as_tensors(image: np.ndarray, mask: np.ndarray, image_path: str
     torch.save(image_tensor, image_path)
     torch.save(mask_tensor, mask_path)
 
+
+import numpy as np
+
+def augment_qsm_histogram(qsm_tensor, contrast_range=(0.9, 1.1), bias_range=(-0.02, 0.02), gamma_range=(0.95, 1.05)):
+    contrast = np.random.uniform(low=contrast_range[0], high=contrast_range[1])
+    bias = np.random.uniform(low=bias_range[0], high=bias_range[1])
+    gamma = np.random.uniform(low=gamma_range[0], high=gamma_range[1])
+    
+    qsm_linear = (qsm_tensor * contrast) + bias
+    
+    sign_mask = np.sign(qsm_linear)
+    abs_qsm = np.abs(qsm_linear)
+    augmented_tensor = sign_mask * np.power(abs_qsm, gamma)
+    
+    return augmented_tensor
+
 os.makedirs('train_data', exist_ok=True)
 
 
@@ -53,10 +69,11 @@ for i in tqdm(range(105)):
     img = nii.load(f'qsm_data/sub-{i:04d}_ses-1_acq-wb_mod-qsm_orient-std_brain.nii.gz').get_fdata()
     
     img, mask = process_3d_volume(img)
-    image_file = f'train_data/image_{2*105+i:04d}.pt'
-    mask_file = f'train_data/mask_{2*105+i:04d}.pt'
-    print(mask.shape)
-    imshow_3d(img*mask, '', rango=(-0.1, 0.1))
-    break
-    # save_volumes_as_tensors(img, mask, image_file, mask_file)
+    image_file = f'train_data/image_{3*105+i:04d}.pt'
+    mask_file = f'train_data/mask_{3*105+i:04d}.pt'
+    img = augment_qsm_histogram(img)
+    # print(mask.shape)
+    # imshow_3d(img*mask, '', rango=(-0.1, 0.1))
+    # break
+    save_volumes_as_tensors(img, mask, image_file, mask_file)
 # %%
