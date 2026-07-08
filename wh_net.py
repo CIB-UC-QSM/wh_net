@@ -106,7 +106,7 @@ class ProximalNetwork(nn.Module):
                                     mode='trilinear', align_corners=False)
             out = self.ups[i + 1](torch.cat((skip, out), dim=1))
 
-        t = torch.tensor(t, device=updt.device).unsqueeze(0).repeat(5).unsqueeze(1)
+        t = torch.tensor(t, device=updt.device).unsqueeze(0).repeat(x.shape[0]).unsqueeze(1)
         alpha = self.mlp(torch.cat([t, updt], dim=1)).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
         residual = self.final_conv(out)
         return x + alpha * residual
