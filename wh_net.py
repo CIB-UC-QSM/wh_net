@@ -114,14 +114,17 @@ class ProximalNetwork(nn.Module):
 
 class ADMMUnrolledNet(nn.Module):
 
-    def __init__(self, chinet, phinet, num_iters=5, eps=1e-6):
+    def __init__(self, chinet, phinet, num_iters=5, eps=1e-6, mu1=0.1, mu2=0.1, mu3=0.1):
         super().__init__()
         self.chinet = chinet
         self.phinet = phinet
         self.num_iters = num_iters
         self.eps = eps
+        self.mu1 = mu1
+        self.mu2 = mu2
+        self.mu3 = mu3
 
-    def step_fn(self, chi, phi_h, y, u, v, eta_y, eta_u, eta_v, phi, mask, W, D, t, tol_res):
+    def step_fn(self, chi, phi_h, z1, z2, z3, s1, s2, s3, phi, mask, W, D, t, tol_res):
 
         chi_fft = torch.fft.fftn(chi, dim=SPATIAL_DIMS)
         forward_physics = torch.fft.ifftn(D * chi_fft, dim=SPATIAL_DIMS).real
@@ -130,44 +133,44 @@ class ADMMUnrolledNet(nn.Module):
         data_resid = (total_field - phi) * mask
         resid_rms = (data_resid.pow(2).sum(dim=SPATIAL_DIMS) / mask.sum(dim=SPATIAL_DIMS).clamp(min=1.0)).sqrt()
 
-        y = (W * phi +  (total_field + eta_y)) / (W + 1 + self.eps)
+        z1 = (W * phi +  self.mu1 * (total_field + s1)) / (W + self.mu1 + self.eps)
 
-        u = self.chinet(chi + eta_u, t, tol_res)
-        v = self.phinet(phi_h + eta_v, t, resid_rms)
+        z2 = self.chinet(chi + s2, t, tol_res)
+        z3 = self.phinet(phi_h + s3, t, resid_rms)
 
-        rhs_chi = (torch.conj(D) * torch.fft.fftn(y - eta_y - phi_h, dim=SPATIAL_DIMS)
-                   + torch.fft.fftn(u - eta_u, dim=SPATIAL_DIMS))
-        denom_chi = torch.abs(D) ** 2 + 1 + self.eps
+        rhs_chi = (self.mu1*torch.conj(D) * torch.fft.fftn(z1 - s1 - phi_h, dim=SPATIAL_DIMS)
+                   + self.mu2*torch.fft.fftn(z2 - s2, dim=SPATIAL_DIMS))
+        denom_chi = self.mu1 * torch.abs(D) ** 2 + self.mu2 + self.eps
         chi_fft = rhs_chi / denom_chi
         chi = torch.fft.ifftn(chi_fft, dim=SPATIAL_DIMS).real * mask
 
         forward_physics = torch.fft.ifftn(D * chi_fft, dim=SPATIAL_DIMS).real * mask
-        rhs_phi = (torch.fft.fftn(y - eta_y - forward_physics, dim=SPATIAL_DIMS)
-                   + torch.fft.fftn(v - eta_v, dim=SPATIAL_DIMS))
-        denom_phi = 2
+        rhs_phi = (self.mu1*torch.fft.fftn(z1 - s1 - forward_physics, dim=SPATIAL_DIMS)
+                   + self.mu3*torch.fft.fftn(z3 - s3, dim=SPATIAL_DIMS))
+        denom_phi = self.mu1 + self.mu3
         phi_h = torch.fft.ifftn(rhs_phi / denom_phi, dim=SPATIAL_DIMS).real
 
         total_field = forward_physics + phi_h
-        eta_y = eta_y + total_field - y
-        eta_u = eta_u + chi - u
-        eta_v = eta_v + phi_h - v
+        s1 = s1 + total_field - z1
+        s2 = s2 + chi - z2
+        s3 = s3 + phi_h - z3
 
-        return (chi, phi_h, y, u, v, eta_y, eta_u, eta_v)
+        return (chi, phi_h, z1, z2, z3, s1, s2, s3)
 
     def forward(self, phi, mask, D, W=None, return_iterates=False, tol=None, max_iters=None):
 
         phi = phi.float()
         mask = mask.float()
-        W = mask if W is None else W.float()
+        W = mask if W is None else W.float()**2
 
         chi = torch.zeros_like(phi)
         phi_h = torch.zeros_like(phi)
-        y = (W * phi) / (W + 1 + self.eps)
-        u = torch.zeros_like(phi)
-        v = torch.zeros_like(phi)
-        eta_y = torch.zeros_like(phi)
-        eta_u = torch.zeros_like(phi)
-        eta_v = torch.zeros_like(phi)
+        z1 = (W * phi) / (W + self.mu1 + self.eps)
+        z2 = torch.zeros_like(phi)
+        z3 = torch.zeros_like(phi)
+        s1 = torch.zeros_like(phi)
+        s2 = torch.zeros_like(phi)
+        s3 = torch.zeros_like(phi)
 
         tol_res = torch.zeros(phi.shape[:2], device=phi.device)
 
@@ -178,13 +181,13 @@ class ADMMUnrolledNet(nn.Module):
         for k in range(n_iters):
             chi_prev = chi
             if use_ckpt:
-                (chi, phi_h, y, u, v, eta_y, eta_u, eta_v) = checkpoint(
-                    self.step_fn, chi, phi_h, y, u, v, eta_y, eta_u, eta_v,
+                (chi, phi_h, z1, z2, z3, s1, s2, s3) = checkpoint(
+                    self.step_fn, chi, phi_h, z1, z2, z3, s1, s2, s3,
                     phi, mask, W, D, k, tol_res, use_reentrant=False
                 )
             else:
-                (chi, phi_h, y, u, v, eta_y, eta_u, eta_v) = self.step_fn(
-                    chi, phi_h, y, u, v, eta_y, eta_u, eta_v,
+                (chi, phi_h, z1, z2, z3, s1, s2, s3) = self.step_fn(
+                    chi, phi_h, z1, z2, z3, s1, s2, s3,
                     phi, mask, W, D, k, tol_res
                 )
 
