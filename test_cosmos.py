@@ -51,7 +51,7 @@ msk = msk.unsqueeze(0)
 D = D.unsqueeze(0)
 W = W.unsqueeze(0)
 
-imshow_3d(phase.squeeze().numpy(), f'Local {snr=}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(phase.squeeze().numpy(), f'Local {snr=} {scale=}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 
 #%%
@@ -64,8 +64,7 @@ net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
 model = ADMMUnrolledNet(net_chi, net_phi, num_iters=100).to(device)
 
-model.load_state_dict(torch.load("checkpoints_scratch6/model_best.pth" , map_location=device), strict=True)
-# model.load_state_dict(torch.load("checkpoints_scratch2/model_last.pth" , map_location=device), strict=True)
+model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth" , map_location=device), strict=True)
 
 @torch.no_grad()
 def evaluate(model, phase_in, mask, D, W):
