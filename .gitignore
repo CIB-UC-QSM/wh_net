@@ -222,3 +222,6 @@ __marimo__/
 *.npz*
 *.pt
 *.pth
+
+checkpoints*/
+*.nii*
