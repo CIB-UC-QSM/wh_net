@@ -16,31 +16,31 @@ from dataset import QSMDataset
 
 # ----------------------------- Configuracion -----------------------------
 # --- Entrenamiento DESDE CERO (sin warm-start) ---
-INIT_CKPT       = 'checkpoints_scratch4/model_best.pth'               # None = desde cero. La normalizacion espectral
+INIT_CKPT       = 'checkpoints_scratch5/model_best.pth'               # None = desde cero. La normalizacion espectral
                                         # (parametrizations.weight.original + buffers _u/_v)
                                         # y el MLP de rho cambian el state_dict: los
                                         # checkpoints previos NO cargan con strict=True.
-CKPT_DIR        = "checkpoints_scratch4" # carpeta para esta corrida
+CKPT_DIR        = "checkpoints_scratch6" # carpeta para esta corrida
 
-EPOCHS          = 300
+EPOCHS          = 50
 BATCH_SIZE      = 5
 PEAK_LR         = 1e-4      # subido: 0.5e-4 era demasiado bajo para mover el warm-start
 MIN_LR_FACTOR   = 0.1       # LR final = PEAK_LR * MIN_LR_FACTOR (coseno)
-WARMUP_EPOCHS   = 2         # warmup corto: evita que el primer paso desestabilice el warm-start
-WH_WARMUP_EPOCHS = 5        # mas largo: el modelo aun no aprendio el termino WH
-LAM_WH          = 1000.0      # BAJADO: para ENFATIZAR chi, lam_chi debe dominar a lam_wh
+WARMUP_EPOCHS   = 5         # warmup corto: evita que el primer paso desestabilice el warm-start
+WH_WARMUP_EPOCHS = 10        # mas largo: el modelo aun no aprendio el termino WH
+LAM_WH          = 10000.0      # BAJADO: para ENFATIZAR chi, lam_chi debe dominar a lam_wh
 
 # --- Iteraciones del ADMM desenrollado (NIVEL 1: robustez a la profundidad) ---
-NUM_ITERS_MAX   = 20        # objetivo de produccion (referencia)
-ITER_START      = 10        # warm-start de un modelo ya entrenado a 30 -> se mantiene 30
-ITER_MIN        = 10        # cota INFERIOR del muestreo aleatorio por batch
-ITER_SAMPLE_MAX = 20        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
-ITER_RAMP_EPOCHS = 10       # epocas para subir la cota superior de ITER_START a ITER_SAMPLE_MAX
-DEEP_SUP_K      = 10         # nº de iterados intermedios supervisados (supervision profunda)
+NUM_ITERS_MAX   = 60        # objetivo de produccion (referencia)
+ITER_START      = 50        # warm-start de un modelo ya entrenado a 30 -> se mantiene 30
+ITER_MIN        = 50        # cota INFERIOR del muestreo aleatorio por batch
+ITER_SAMPLE_MAX = 60        # cota SUPERIOR del muestreo: un poco MAS ALLA del objetivo (30)
+ITER_RAMP_EPOCHS = 5       # epocas para subir la cota superior de ITER_START a ITER_SAMPLE_MAX
+DEEP_SUP_K      = 20         # nº de iterados intermedios supervisados (supervision profunda)
 
 # --- Inferencia / produccion: iteracion adaptativa con criterio de parada ---
 EVAL_TOL        = 1e-3      # parar cuando ||chi_k - chi_{k-1}|| / ||chi_k|| < tol
-EVAL_MAX_ITERS  = 25        # tope de seguridad (puede exceder NUM_ITERS_MAX)
+EVAL_MAX_ITERS  = 55        # tope de seguridad (puede exceder NUM_ITERS_MAX)
 
 GRAD_CLIP       = 1.0       # el clip ACOTA el paso de los batches dificiles (en vez de descartarlos)
 EMA_DECAY       = 0.9     # promedio movil exponencial de peso
@@ -89,7 +89,7 @@ def weak_harmonic_loss(phi, mask):
 
 
 def hybrid_qsm_loss(chi_pred, chi_gt, phi_pred, phi_gt, mask,
-                    lam_chi=1500.0, lam_phi=1.0, lam_grad=1.0, lam_wh=10.0):
+                    lam_chi=1500.0, lam_phi=10.0, lam_grad=10.0, lam_wh=10.0):
     loss_chi = F.l1_loss(chi_pred * mask, chi_gt * mask)
     loss_phi = F.l1_loss(phi_pred * mask, phi_gt * mask)
     loss_grad = gradient_loss(chi_pred, chi_gt, mask)
@@ -111,7 +111,7 @@ def deep_supervised_loss(iterates, chi_gt, phi_gt, mask, lam_wh):
     if K <= DEEP_SUP_K:
         idxs = list(range(K))
     else:
-        idxs = sorted(set(torch.linspace(0, K - 1, DEEP_SUP_K).round().int().tolist()))
+        idxs = sorted(set(torch.linspace(1, K - 1, DEEP_SUP_K).round().int().tolist()))
     w = [i + 1 for i in range(len(idxs))]          # pesos crecientes por posicion
     s = float(sum(w))
     total, parts_last = 0.0, None
@@ -296,6 +296,7 @@ if __name__ == "__main__":
 
         backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
         model.load_state_dict(ema.shadow, strict=True)
+        model.num_iters = EVAL_MAX_ITERS
         val_chi, val_phi = evaluate(model, val_loader, device)
         model.load_state_dict(backup, strict=True)
 
@@ -311,7 +312,7 @@ if __name__ == "__main__":
         if (epoch + 1) % 10 == 0:
             torch.save(model.state_dict(), os.path.join(CKPT_DIR, f"model_epoch_{epoch+1}.pth"))
 
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 2 == 0:
             model.load_state_dict(ema.shadow, strict=True)
             model.eval()
             with torch.no_grad():
