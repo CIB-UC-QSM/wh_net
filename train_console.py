@@ -21,10 +21,10 @@ from wh_net import ADMMUnrolledNet, ProximalNetwork
 
 
 # ----------------------------- Configuration -----------------------------
-# Range-normalized Fourier dynamics require a separate training run.
-# INIT_CKPT = "checkpoints_masked_admm/model_best.pth"
+# Continue from the best checkpoint trained with the restored unit-penalty
+# ADMM formulation. Keep this run separate from the newer solver experiments.
 INIT_CKPT = "checkpoints_scratch5/model_best.pth"
-CKPT_DIR = "checkpoints_range_normalized_admm"
+CKPT_DIR = "checkpoints_restored_admm"
 
 EPOCHS = 50
 BATCH_SIZE = 5
@@ -58,8 +58,6 @@ BACKGROUND_SCALE = (0.001, 20.0)
 TV_REGULARIZATION = (0.0, 0.01)
 TV_PROBABILITY = 0.5
 WEIGHT_AUGMENTATION_PROBABILITY = 0.5
-NORMALIZE_INPUT = True
-INPUT_SCALE_FLOOR = 1e-6
 
 # Fixed out-of-distribution simulation evaluations, prepared once and evaluated
 # with EMA parameters at the end of every epoch.
@@ -482,7 +480,7 @@ if __name__ == "__main__":
 
     experiment = Experiment(project_name="wh-net-qsm")
     experiment.log_parameters({
-        "mode": "range_normalized_projected_fourier",
+        "mode": "restored_unit_penalty_admm",
         "init_ckpt": str(INIT_CKPT),
         "ckpt_dir": CKPT_DIR,
         "epochs": EPOCHS,
@@ -512,8 +510,6 @@ if __name__ == "__main__":
         "tv_regularization": TV_REGULARIZATION,
         "tv_probability": TV_PROBABILITY,
         "weight_augmentation_probability": WEIGHT_AUGMENTATION_PROBABILITY,
-        "normalize_input": NORMALIZE_INPUT,
-        "input_scale_floor": INPUT_SCALE_FLOOR,
         "external_eval_enabled": EXTERNAL_EVAL_ENABLED,
         "cosmos_factor": COSMOS_FACTOR,
         "cosmos_pad": COSMOS_PAD,
@@ -589,9 +585,6 @@ if __name__ == "__main__":
         net_chi,
         net_phi,
         num_iters=ITER_START,
-        conditioning_iters=ITER_SAMPLE_MAX,
-        normalize_input=NORMALIZE_INPUT,
-        input_scale_floor=INPUT_SCALE_FLOOR,
     ).to(device)
     external_cases = build_external_evaluations()
     if external_cases:
@@ -605,19 +598,17 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(INIT_CKPT, map_location=device, weights_only=True), strict=True)
         print(f"Loaded initial weights from {INIT_CKPT}")
     else:
-        print("Training projected Fourier-update model from scratch")
+        print("Training restored unit-penalty ADMM model from scratch")
 
     torch.save(
         {
-            "rho_y": model.rho_y,
-            "rho_u": model.rho_u,
-            "rho_v": model.rho_v,
-            "conditioning_iters": model.conditioning_iters,
-            "mask_chi": model.mask_chi,
-            "normalize_input": model.normalize_input,
-            "input_scale_floor": model.input_scale_floor,
-            "chi_update": "full-FOV Fourier closed form followed by ROI projection",
-            "weight_semantics": "W is mask or normalized magnitude, multiplied by mask",
+            "solver": "restored unit-penalty ADMM",
+            "eps": model.eps,
+            "initial_num_iters": model.num_iters,
+            "penalties": {"y": 1.0, "u": 1.0, "v": 1.0},
+            "conditioning": "raw iteration index and update RMS",
+            "chi_update": "unit-penalty Fourier closed form followed by ROI masking",
+            "weight_semantics": "W is a non-negative data-fidelity weight",
         },
         os.path.join(CKPT_DIR, "solver_config.pth"),
     )
