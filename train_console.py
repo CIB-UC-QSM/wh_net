@@ -168,19 +168,27 @@ def hybrid_qsm_loss(chi_pred, chi_gt, phi_pred, phi_gt, phase, mask, W, D,
 
 
 def deep_supervised_loss(iterates, chi_gt, phi_gt, phase, mask, W, D, lam_wh):
+    """Weighted deep supervision over a small set of late-biased iterates."""
     count = len(iterates)
-    loss_intermediate = 0.0
-    for i in range(count - 1):
-        chi_k, _ = iterates[i]
-        loss_intermediate += masked_l1(chi_k, chi_gt, mask)
-    
-    chi_final, phi_final = iterates[-1]
-    loss_final, parts = hybrid_qsm_loss(
-        chi_final, chi_gt, phi_final, phi_gt, phase, mask, W, D, lam_wh=lam_wh
-    )
-    
-    total_loss = loss_final + 0.2 * (loss_intermediate / max(1, count - 1))
-    return total_loss, parts
+    if count == 0:
+        raise RuntimeError("The model returned no iterates for deep supervision.")
+    if count <= DEEP_SUP_K:
+        indices = list(range(count))
+    else:
+        indices = sorted(set(torch.linspace(1, count - 1, DEEP_SUP_K).round().int().tolist()))
+
+    weights = torch.arange(1, len(indices) + 1, device=chi_gt.device, dtype=chi_gt.dtype)
+    weights = weights / weights.sum()
+    total = chi_gt.new_zeros(())
+    parts_last = None
+    for weight, index in zip(weights, indices):
+        chi_k, phi_k = iterates[index]
+        loss_k, parts = hybrid_qsm_loss(
+            chi_k, chi_gt, phi_k, phi_gt, phase, mask, W, D, lam_wh=lam_wh
+        )
+        total = total + weight * loss_k
+        parts_last = parts
+    return total, parts_last
 
 
 class EMA:
@@ -608,7 +616,7 @@ if __name__ == "__main__":
 
     optimizer = optim.AdamW(model.parameters(), lr=PEAK_LR, weight_decay=1e-5)
 
-
+    
     steps_per_epoch = max(1, len(train_loader))
     total_steps = steps_per_epoch * EPOCHS
     warmup_steps = steps_per_epoch * WARMUP_EPOCHS
