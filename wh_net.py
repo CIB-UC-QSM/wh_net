@@ -56,8 +56,6 @@ class ProximalNetwork(nn.Module):
         self.ups = nn.ModuleList()
         self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
 
-        self.alpha = nn.Parameter(torch.full((1,), 0.1))
-
         in_c = in_channels
         for feature in features:
             self.downs.append(DoubleConv(in_c, feature))
@@ -87,8 +85,9 @@ class ProximalNetwork(nn.Module):
             _apply_spectral_norm(self)
 
     def forward(self, x, t=0, updt=0):
-
-        out = x
+        scale = torch.std(x, dim=SPATIAL_DIMS, keepdim=True).clamp(min=1e-5)
+        out = x / scale
+        
         skip_connections = []
         for down in self.downs:
             out = down(out)
@@ -106,11 +105,20 @@ class ProximalNetwork(nn.Module):
                                     mode='trilinear', align_corners=False)
             out = self.ups[i + 1](torch.cat((skip, out), dim=1))
 
-        t = torch.tensor(t, device=updt.device).unsqueeze(0).repeat(x.shape[0]).unsqueeze(1)
-        alpha = self.mlp(torch.cat([t, updt], dim=1)).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-        residual = self.final_conv(out)
-        return x + alpha * residual
+        t_tensor = torch.tensor(t, device=x.device).unsqueeze(0).repeat(x.shape[0]).unsqueeze(1)
+        
+        scale_vec = scale.view(x.shape[0], 1)
+        if isinstance(updt, torch.Tensor):
+            updt_tensor = updt.view(x.shape[0], 1) if updt.ndim > 0 else updt.unsqueeze(0).repeat(x.shape[0]).unsqueeze(1)
+        else:
+            updt_tensor = torch.tensor(updt, device=x.device).unsqueeze(0).repeat(x.shape[0]).unsqueeze(1)
+            
+        updt_norm = updt_tensor / scale_vec
 
+        alpha = self.mlp(torch.cat([t_tensor, updt_norm], dim=1)).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        residual = self.final_conv(out)
+        
+        return x + alpha * scale * residual
 
 class ADMMUnrolledNet(nn.Module):
 
