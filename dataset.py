@@ -199,7 +199,7 @@ class QSMDataset(Dataset):
             .clamp(0.0, 1.0)
         )
 
-        chi = chi * self._uniform(0.5, 3.0, generator, self.device)
+        chi = chi * self._uniform(0.1, 3.0, generator, self.device)
         apply_tv = self._uniform(
             0.0, 1.0, generator, self.device
         ) < self.tv_probability
