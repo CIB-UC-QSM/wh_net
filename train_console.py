@@ -23,7 +23,7 @@ from wh_net import ADMMUnrolledNet, ProximalNetwork
 # ----------------------------- Configuration -----------------------------
 # Continue from the best checkpoint trained with the restored unit-penalty
 # ADMM formulation. Keep this run separate from the newer solver experiments.
-INIT_CKPT = "checkpoints_scratch5/model_best.pth"
+INIT_CKPT = None
 CKPT_DIR = "checkpoints_restored_admm"
 
 EPOCHS = 50
@@ -34,20 +34,20 @@ MIN_LR_FACTOR = 0.1
 WARMUP_EPOCHS = 5
 WH_WARMUP_EPOCHS = 10
 
-LAM_CHI = 1000.0
+LAM_CHI = 2000.0
 LAM_PHI = 10.0
 LAM_GRAD = 10.0
 LAM_WH = 1200.0
 LAM_DATA = 10.0
 
-ITER_START = 30
-ITER_MIN = 28
-ITER_SAMPLE_MAX = 32
-ITER_RAMP_EPOCHS = 5
+ITER_START = 20
+ITER_MIN = 20
+ITER_SAMPLE_MAX = 55
+ITER_RAMP_EPOCHS = 20
 DEEP_SUP_K = 4
 
 EVAL_TOL = 1e-3
-EVAL_MAX_ITERS = 15
+EVAL_MAX_ITERS = 50
 GRAD_CLIP = 1.0
 EMA_DECAY = 0.999
 VAL_FRAC = 0.15
@@ -57,7 +57,7 @@ SOURCE_ID_MODULUS = 105
 BACKGROUND_SCALE = (0.001, 20.0)
 TV_REGULARIZATION = (0.0, 0.01)
 TV_PROBABILITY = 0.5
-WEIGHT_AUGMENTATION_PROBABILITY = 0.5
+WEIGHT_AUGMENTATION_PROBABILITY = 0.8
 
 # Fixed out-of-distribution simulation evaluations, prepared once and evaluated
 # with EMA parameters at the end of every epoch.
@@ -168,27 +168,19 @@ def hybrid_qsm_loss(chi_pred, chi_gt, phi_pred, phi_gt, phase, mask, W, D,
 
 
 def deep_supervised_loss(iterates, chi_gt, phi_gt, phase, mask, W, D, lam_wh):
-    """Weighted deep supervision over a small set of late-biased iterates."""
     count = len(iterates)
-    if count == 0:
-        raise RuntimeError("The model returned no iterates for deep supervision.")
-    if count <= DEEP_SUP_K:
-        indices = list(range(count))
-    else:
-        indices = sorted(set(torch.linspace(1, count - 1, DEEP_SUP_K).round().int().tolist()))
-
-    weights = torch.arange(1, len(indices) + 1, device=chi_gt.device, dtype=chi_gt.dtype)
-    weights = weights / weights.sum()
-    total = chi_gt.new_zeros(())
-    parts_last = None
-    for weight, index in zip(weights, indices):
-        chi_k, phi_k = iterates[index]
-        loss_k, parts = hybrid_qsm_loss(
-            chi_k, chi_gt, phi_k, phi_gt, phase, mask, W, D, lam_wh=lam_wh
-        )
-        total = total + weight * loss_k
-        parts_last = parts
-    return total, parts_last
+    loss_intermediate = 0.0
+    for i in range(count - 1):
+        chi_k, _ = iterates[i]
+        loss_intermediate += masked_l1(chi_k, chi_gt, mask)
+    
+    chi_final, phi_final = iterates[-1]
+    loss_final, parts = hybrid_qsm_loss(
+        chi_final, chi_gt, phi_final, phi_gt, phase, mask, W, D, lam_wh=lam_wh
+    )
+    
+    total_loss = loss_final + 0.2 * (loss_intermediate / max(1, count - 1))
+    return total_loss, parts
 
 
 class EMA:
@@ -296,7 +288,8 @@ def build_sim2_evaluation():
     """Reproduce the crop, centered padding, and weighting in test_sim2.py."""
     mask_raw = loadmat("mask_final.mat")["mask_final"]
     phase_raw = loadmat("Sim2.mat")["phase"]
-    W_raw = loadmat("sim2_w.mat")["w"]
+    # W_raw = loadmat("sim2_w.mat")["w"]
+    W_raw = loadmat("mask_final.mat")["mask_final"]
     chi_raw = nib.load("Sim2ChiGT.nii.gz").get_fdata()
 
     coordinates = np.argwhere(mask_raw > 0)
@@ -614,6 +607,8 @@ if __name__ == "__main__":
     )
 
     optimizer = optim.AdamW(model.parameters(), lr=PEAK_LR, weight_decay=1e-5)
+
+
     steps_per_epoch = max(1, len(train_loader))
     total_steps = steps_per_epoch * EPOCHS
     warmup_steps = steps_per_epoch * WARMUP_EPOCHS
