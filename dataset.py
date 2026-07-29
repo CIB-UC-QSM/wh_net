@@ -23,7 +23,7 @@ class QSMDataset(Dataset):
     """
 
     def __init__(self, data_dir="train_data", training=True, seed=0,
-                 source_id_modulus=105, background_scale=(0.001, 20),
+                 source_id_modulus=105, background_scale=(0.1, 30),
                  tv_regularization=(0.0, 0.01), tv_probability=0.5,
                  weight_augmentation_probability=0.5, device=None):
         self.chi_files = sorted(
