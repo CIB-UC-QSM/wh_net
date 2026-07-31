@@ -1,4 +1,6 @@
 #%%
+1+1
+#%%
 import matplotlib.pyplot as plt
 from wh_net import ProximalNetwork, ADMMUnrolledNet
 from utils import continuous_dipole_kernel, imshow_3d, rmse
@@ -34,7 +36,7 @@ local = torch.real(torch.fft.ifftn(D * chi_k, dim=SPATIAL)) * msk
 
 
 msk_dil = F.max_pool3d(msk.unsqueeze(0), kernel_size=7, stride=1, padding=3).squeeze(0)
-scale = 0.1
+scale = 10
 ext_k = torch.fft.fftn((1.0 - msk_dil) * scale, dim=SPATIAL)
 phi = torch.real(torch.fft.ifftn(D * ext_k, dim=SPATIAL)) * msk
 
