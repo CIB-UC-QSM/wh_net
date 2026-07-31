@@ -1,11 +1,12 @@
 #%%
+
+#%%
 import matplotlib.pyplot as plt
 from wh_net import ProximalNetwork, ADMMUnrolledNet
 from utils import continuous_dipole_kernel, imshow_3d, rmse
 from scipy.io import loadmat
 import torch.nn.functional as F
 import torch
-from torch.amp import autocast
 import numpy as np
 import nibabel as nib
 #%%
@@ -25,7 +26,7 @@ def pad_to_sqr_shape(volume, zero_pad):
 
 msk = loadmat('mask_final.mat')['mask_final']
 phase = loadmat('Sim2.mat')['phase']
-w = loadmat('sim2_w.mat')['w']
+w = msk.copy()
 chi_gt = nib.load('Sim2ChiGT.nii.gz').get_fdata()
 
 coords = np.argwhere(msk)
@@ -57,6 +58,7 @@ phase = phase.unsqueeze(0)
 msk = msk.unsqueeze(0)
 D = D.unsqueeze(0)
 W = W.unsqueeze(0)
+W = msk.clone()
 
 imshow_3d(phase.squeeze().numpy(), f'Local', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
@@ -69,22 +71,30 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
-model = ADMMUnrolledNet(net_chi, net_phi, num_iters=100).to(device)
+model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50).to(device)
 
-model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth" , map_location=device), strict=True)
+model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth", map_location=device, weights_only=True), strict=True)
 
 @torch.no_grad()
 def evaluate(model, phase_in, mask, D, W):
     model.eval()
 
-    with autocast("cuda", dtype=torch.bfloat16):
-        preds = model(phase_in.to(device), mask.to(device), D.to(device), W.to(device), return_iterates=True)
+    preds = model(
+        phase_in.to(device), mask.to(device), D.to(device), W.to(device),
+        return_iterates=True,
+    )
     chi_pred = [x[0].cpu() for x in preds]
     phi_pred = [x[1].cpu() for x in preds]
     return chi_pred, phi_pred
 
 chi_preds, phi_preds = evaluate(model, phase, msk, D, W)
 print(chi_preds[-1].shape)
+chi_reference, _ = evaluate(model, phase * factor, msk, D, W)
+equivariance_error = (
+    torch.linalg.vector_norm(chi_preds[-1] * factor - chi_reference[-1])
+    / torch.linalg.vector_norm(chi_reference[-1]).clamp_min(1e-12)
+).item()
+print(f"scale equivariance error: {equivariance_error:.3e}")
 
 
 # %%
@@ -102,7 +112,7 @@ for i, chi in enumerate(chi_preds):
     print(i, val:=rmse(chi_pred, chi_gt))
     errores.append(val)
 
-chi_pred = chi_preds[np.argmin(errores)].squeeze().numpy()* factor
+chi_pred = chi_preds[-1].squeeze().numpy()* factor
 imshow_3d(chi_pred, f'rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 # %%
@@ -149,11 +159,13 @@ for factor in np.linspace(0.1, 1, 9):
             val=rmse(chi_pred, chi_gt)
             errores.append(val)
 
-        grid_search.append((np.min(errores), factor, pad))
+        grid_search.append((errores[-1], factor, pad))
 
 errs = [x[0] for x in grid_search]
 idx = np.argmin(errs)
 print(grid_search[idx])
+print(f"scale-grid mean RMSE: {np.mean(errs):.3f}")
+print(f"scale-grid worst RMSE: {np.max(errs):.3f}")
 
 #%%
 
@@ -235,9 +247,9 @@ device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
-model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50, mask_chi=True).to(device)
+model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50).to(device)
 
-model.load_state_dict(torch.load("checkpoints_scratch3/model_best.pth" , map_location=device), strict=True)
+model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth", map_location=device, weights_only=True), strict=True)
 
 # grid_search = []
 for snr in np.linspace(10, 100, 7):

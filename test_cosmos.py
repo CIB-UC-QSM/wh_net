@@ -1,11 +1,12 @@
 #%%
+1+1
+#%%
 import matplotlib.pyplot as plt
 from wh_net import ProximalNetwork, ADMMUnrolledNet
 from utils import continuous_dipole_kernel, imshow_3d, rmse
 from scipy.io import loadmat
 import torch.nn.functional as F
 import torch
-from torch.amp import autocast
 import numpy as np
 
 def pad_to_sqr_shape(
@@ -16,12 +17,12 @@ def pad_to_sqr_shape(
     new_volume[zero_pad:x+zero_pad, zero_pad:y+zero_pad, zero_pad:z+zero_pad] = volume
     return new_volume
 
-factor = 0.325
+factor = 1
 
 SPATIAL = (-3, -2, -1)
 pad = 12
 
-chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat('chi_cosmos.mat')['chi_cosmos'], pad)).unsqueeze(0).float()/factor
+chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat('chi_cosmos.mat')['chi_cosmos'], pad)).unsqueeze(0).float()
 msk = torch.from_numpy(pad_to_sqr_shape(loadmat('msk.mat')['msk'], pad)).unsqueeze(0).float()
 
 W = torch.from_numpy(pad_to_sqr_shape(loadmat('msk.mat')['msk'], pad)).unsqueeze(0).float()
@@ -34,7 +35,7 @@ local = torch.real(torch.fft.ifftn(D * chi_k, dim=SPATIAL)) * msk
 
 
 msk_dil = F.max_pool3d(msk.unsqueeze(0), kernel_size=7, stride=1, padding=3).squeeze(0)
-scale = 0.1
+scale = 5
 ext_k = torch.fft.fftn((1.0 - msk_dil) * scale, dim=SPATIAL)
 phi = torch.real(torch.fft.ifftn(D * ext_k, dim=SPATIAL)) * msk
 
@@ -45,7 +46,9 @@ else:
     field_std = torch.tensor(0.0)
 snr = 100
 noise_std = field_std / snr
-phase = msk * (local + torch.randn_like(local) * noise_std + phi)
+noise_generator = torch.Generator().manual_seed(12_345)
+noise = torch.randn(local.shape, generator=noise_generator) * noise_std
+phase = msk * (local + noise + phi) / factor
 phase = phase.unsqueeze(0)
 msk = msk.unsqueeze(0)
 D = D.unsqueeze(0)
@@ -62,22 +65,30 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
-model = ADMMUnrolledNet(net_chi, net_phi, num_iters=100).to(device)
+model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50).to(device)
 
-model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth" , map_location=device), strict=True)
+model.load_state_dict(torch.load("checkpoints_scratch5_k50/model_best.pth", map_location=device, weights_only=True), strict=True)
 
 @torch.no_grad()
 def evaluate(model, phase_in, mask, D, W):
     model.eval()
 
-    with autocast("cuda", dtype=torch.bfloat16):
-        preds = model(phase_in.to(device), mask.to(device), D.to(device), W.to(device), return_iterates=True)
+    preds = model(
+        phase_in.to(device), mask.to(device), D.to(device), W.to(device),
+        return_iterates=True,
+    )
     chi_pred = [x[0].cpu() for x in preds]
     phi_pred = [x[1].cpu() for x in preds]
     return chi_pred, phi_pred
 
 chi_preds, phi_preds = evaluate(model, phase, msk, D, W)
 print(chi_preds[-1].shape)
+chi_reference, _ = evaluate(model, phase * factor, msk, D, W)
+equivariance_error = (
+    torch.linalg.vector_norm(chi_preds[-1] * factor - chi_reference[-1])
+    / torch.linalg.vector_norm(chi_reference[-1]).clamp_min(1e-12)
+).item()
+print(f"scale equivariance error: {equivariance_error:.3e}")
 
 
 # %%
@@ -95,7 +106,7 @@ for i, chi in enumerate(chi_preds):
     print(i, val:=rmse(chi_pred, chi_gt))
     errores.append(val)
 
-chi_pred = chi_preds[np.argmin(errores)].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad] * factor
+chi_pred = chi_preds[-1].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad] * factor
 imshow_3d(chi_pred, f'chi_cosmos rmse={rmse(chi_pred, chi_gt).item():.2f}, {snr=}, back(ppm)={scale}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 # %%
@@ -105,10 +116,10 @@ imshow_3d(chi_pred-chi_gt, 'chi_pred-chi_gt', rango=(-0.1, 0.1), angles=(-90, -9
 
 #%%
 grid_search = []
-for factor in np.linspace(0.1, 1, 9):
+for factor in np.linspace(0.1, 1, 19):
     for pad in [12]:
 
-        chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat('chi_cosmos.mat')['chi_cosmos'], pad)).unsqueeze(0).float() / factor
+        chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat('chi_cosmos.mat')['chi_cosmos'], pad)).unsqueeze(0).float()
         msk = torch.from_numpy(pad_to_sqr_shape(loadmat('msk.mat')['msk'], pad)).unsqueeze(0).float()
         W = torch.from_numpy(pad_to_sqr_shape(loadmat('msk.mat')['msk'], pad)).unsqueeze(0).float()
         D = torch.from_numpy(continuous_dipole_kernel(chi.shape[-3:])).unsqueeze(0).float()
@@ -125,7 +136,9 @@ for factor in np.linspace(0.1, 1, 9):
         else:
             field_std = torch.tensor(0.0)
         noise_std = field_std / snr
-        phase = msk * (local + torch.randn_like(local) * noise_std + phi)
+        noise_generator = torch.Generator().manual_seed(12_345 + pad)
+        noise = torch.randn(local.shape, generator=noise_generator) * noise_std
+        phase = msk * (local + noise + phi) / factor
 
         phase = phase.unsqueeze(0)
         msk = msk.unsqueeze(0)
@@ -141,11 +154,13 @@ for factor in np.linspace(0.1, 1, 9):
             val=rmse(chi_pred, chi_gt)
             errores.append(val)
 
-        grid_search.append((np.min(errores), factor, pad))
+        grid_search.append((errores[-1], factor, pad))
 
 errs = [x[0] for x in grid_search]
 idx = np.argmin(errs)
 print(grid_search[idx])
+print(f"scale-grid mean RMSE: {np.mean(errs):.3f}")
+print(f"scale-grid worst RMSE: {np.max(errs):.3f}")
 
 #%%
 
@@ -228,9 +243,9 @@ device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
-model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50, mask_chi=True).to(device)
+model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50).to(device)
 
-model.load_state_dict(torch.load("checkpoints_scratch3/model_best.pth" , map_location=device), strict=True)
+model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth", map_location=device, weights_only=True), strict=True)
 
 # grid_search = []
 for snr in np.linspace(10, 100, 7):
