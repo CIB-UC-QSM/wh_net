@@ -38,17 +38,17 @@ class QSMDataset(Dataset):
             chi = torch.flip(chi, dims=flip_dims).contiguous()
             msk = torch.flip(msk, dims=flip_dims).contiguous()
 
-        rval = torch.rand(1).item() 
-        if rval > 0.5:
-            W = msk.clone()
-        elif rval > 0.25:
-            W = chi.clone()
-            W = W - W.min()
-            W = (W / W.max()) * msk
-        else:
-            W = chi.clone() * -1
-            W = W - W.min()
-            W = (W / W.max()) * msk
+        # rval = torch.rand(1).item() 
+        # if rval > 0.5:
+        W = msk.clone()
+        # elif rval > 0.25:
+        #     W = chi.clone()
+        #     W = W - W.min()
+        #     W = (W / W.max()) * msk
+        # else:
+        #     W = chi.clone() * -1
+        #     W = W - W.min()
+        #     W = (W / W.max()) * msk
 
         chi_k = torch.fft.fftn(chi * msk, dim=SPATIAL)
         local = torch.real(torch.fft.ifftn(self.D * chi_k, dim=SPATIAL)) * msk

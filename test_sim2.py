@@ -235,7 +235,7 @@ device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
-model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50, mask_chi=True).to(device)
+model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50).to(device)
 
 model.load_state_dict(torch.load("checkpoints_scratch3/model_best.pth" , map_location=device), strict=True)
 

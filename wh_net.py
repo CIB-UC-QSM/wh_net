@@ -114,12 +114,60 @@ class ProximalNetwork(nn.Module):
 
 class ADMMUnrolledNet(nn.Module):
 
-    def __init__(self, chinet, phinet, num_iters=5, eps=1e-6):
+    """Unrolled ADMM for the masked susceptibility regularizer.
+
+    The susceptibility term is ``R_chi(M * chi)``. Its scaled ADMM split is
+    therefore ``u = M * chi`` (rather than ``u = chi``), while ``v = phi_h``
+    and ``y = D * chi + phi_h`` retain their original meanings. The mask does
+    not commute with dipole convolution, so the resulting chi normal equation
+    is solved with a fixed number of conjugate-gradient iterations instead of
+    the previous element-wise Fourier-domain division.
+    """
+
+    def __init__(self, chinet, phinet, num_iters=5, eps=1e-6, cg_iters=4):
         super().__init__()
         self.chinet = chinet
         self.phinet = phinet
         self.num_iters = num_iters
         self.eps = eps
+        if cg_iters < 1:
+            raise ValueError("cg_iters must be at least one.")
+        self.cg_iters = int(cg_iters)
+
+    def _apply_chi_normal(self, chi, mask, D):
+        """Apply ``DᴴD + MᴴM + eps I`` to ``chi``."""
+        chi_fft = torch.fft.fftn(chi, dim=SPATIAL_DIMS)
+        data_term = torch.fft.ifftn(
+            torch.abs(D) ** 2 * chi_fft, dim=SPATIAL_DIMS
+        ).real
+        return data_term + mask.square() * chi + self.eps * chi
+
+    def _solve_chi(self, rhs, mask, D, initial):
+        """Solve the masked chi normal equation with batched CG."""
+        chi = initial
+        residual = rhs - self._apply_chi_normal(chi, mask, D)
+        direction = residual
+        residual_norm = residual.square().sum(
+            dim=SPATIAL_DIMS, keepdim=True
+        )
+
+        for _ in range(self.cg_iters):
+            normal_direction = self._apply_chi_normal(direction, mask, D)
+            denominator = (direction * normal_direction).sum(
+                dim=SPATIAL_DIMS, keepdim=True
+            ).clamp_min(self.eps)
+            step = residual_norm / denominator
+            chi = chi + step * direction
+            residual = residual - step * normal_direction
+            next_residual_norm = residual.square().sum(
+                dim=SPATIAL_DIMS, keepdim=True
+            )
+            direction = residual + (
+                next_residual_norm / residual_norm.clamp_min(self.eps)
+            ) * direction
+            residual_norm = next_residual_norm
+
+        return chi
 
     def step_fn(self, chi, phi_h, y, u, v, eta_y, eta_u, eta_v, phi, mask, W, D, t, tol_res):
 
@@ -132,16 +180,25 @@ class ADMMUnrolledNet(nn.Module):
 
         y = (W * phi +  (total_field + eta_y)) / (W + 1 + self.eps)
 
-        u = self.chinet(chi + eta_u, t, tol_res)
+        # R_chi acts on M * chi, so u is the auxiliary variable for that
+        # masked quantity. eta_u is already in the same auxiliary space.
+        u = self.chinet(mask * chi + eta_u, t, tol_res)
         v = self.phinet(phi_h + eta_v, t, resid_rms)
 
-        rhs_chi = (torch.conj(D) * torch.fft.fftn(y - eta_y - phi_h, dim=SPATIAL_DIMS)
-                   + torch.fft.fftn(u - eta_u, dim=SPATIAL_DIMS))
-        denom_chi = torch.abs(D) ** 2 + 1 + self.eps
-        chi_fft = rhs_chi / denom_chi
-        chi = torch.fft.ifftn(chi_fft, dim=SPATIAL_DIMS).real * mask
+        # (DᴴD + MᴴM + eps I) chi = Dᴴ(y - eta_y - phi_h)
+        #                              + Mᴴ(u - eta_u)
+        chi_rhs = y - eta_y - phi_h
+        rhs_chi = (
+            torch.fft.ifftn(
+                torch.conj(D) * torch.fft.fftn(chi_rhs, dim=SPATIAL_DIMS),
+                dim=SPATIAL_DIMS,
+            ).real
+            + mask * (u - eta_u)
+        )
+        chi = self._solve_chi(rhs_chi, mask, D, initial=chi)
+        chi_fft = torch.fft.fftn(chi, dim=SPATIAL_DIMS)
 
-        forward_physics = torch.fft.ifftn(D * chi_fft, dim=SPATIAL_DIMS).real * mask
+        forward_physics = torch.fft.ifftn(D * chi_fft, dim=SPATIAL_DIMS).real
         rhs_phi = (torch.fft.fftn(y - eta_y - forward_physics, dim=SPATIAL_DIMS)
                    + torch.fft.fftn(v - eta_v, dim=SPATIAL_DIMS))
         denom_phi = 2
@@ -149,12 +206,21 @@ class ADMMUnrolledNet(nn.Module):
 
         total_field = forward_physics + phi_h
         eta_y = eta_y + total_field - y
-        eta_u = eta_u + chi - u
+        eta_u = eta_u + mask * chi - u
         eta_v = eta_v + phi_h - v
 
         return (chi, phi_h, y, u, v, eta_y, eta_u, eta_v)
 
-    def forward(self, phi, mask, D, W=None, return_iterates=False, tol=None, max_iters=None):
+    def forward(self, phi, mask, D, W=None, return_iterates=False, tol=None,
+                max_iters=None, iterate_callback=None):
+        """Reconstruye ``chi`` y ``phi_h`` mediante ADMM desenrollado.
+
+        ``iterate_callback``, cuando se proporciona, se llama después de cada
+        iteración como ``callback(iteration, chi, phi_h)``. Permite evaluar las
+        reconstrucciones intermedias sin conservar todos los volúmenes en GPU
+        con ``return_iterates=True``; este último conserva su comportamiento
+        original para la supervisión profunda durante el entrenamiento.
+        """
 
         phi = phi.float()
         mask = mask.float()
@@ -190,6 +256,9 @@ class ADMMUnrolledNet(nn.Module):
 
             if return_iterates:
                 iterates.append((chi, phi_h))
+
+            if iterate_callback is not None:
+                iterate_callback(k + 1, chi, phi_h)
 
             if tol is not None and k > 0:
                 rel = torch.norm(chi - chi_prev) / (torch.norm(chi) + self.eps)

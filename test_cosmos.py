@@ -45,7 +45,7 @@ if inside.sum() > 1:
     field_std = torch.max(local[inside].abs())
 else:
     field_std = torch.tensor(0.0)
-snr = 100
+snr = 30
 noise_std = field_std / snr
 phase = msk * (local + torch.randn_like(local) * noise_std + phi)
 phase = phase.unsqueeze(0)
@@ -67,6 +67,7 @@ net_phi = ProximalNetwork().to(device)
 model = ADMMUnrolledNet(net_chi, net_phi, num_iters=100).to(device)
 
 model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth" , map_location=device), strict=True)
+# model.load_state_dict(torch.load("checkpoints_scratch6/model_best.pth" , map_location=device), strict=True)
 
 @torch.no_grad()
 def evaluate(model, phase_in, mask, D, W):
@@ -86,19 +87,19 @@ print(chi_preds[-1].shape)
 chi_pred = chi_preds[-1].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad] * factor
 phi_pred = phi_preds[-1].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]
 mask = msk.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]
-imshow_3d(chi_pred, f'chi_cosmos rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
-imshow_3d(phi_pred, 'phi_pred', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(chi_pred*mask, f'chi_cosmos rmse={rmse(chi_pred*mask, chi_gt*mask).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(phi_pred*mask, 'phi_pred', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 
 # %%
 errores = []
 for i, chi in enumerate(chi_preds):
     chi_pred = chi.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]* factor
-    print(i, val:=rmse(chi_pred, chi_gt))
+    print(i, val:=rmse(chi_pred*mask, chi_gt*mask))
     errores.append(val)
 
 chi_pred = chi_preds[np.argmin(errores)].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad] * factor
-imshow_3d(chi_pred, f'chi_cosmos rmse={rmse(chi_pred, chi_gt).item():.2f}, {snr=}, back(ppm)={scale}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(chi_pred*mask, f'chi_cosmos rmse={rmse(chi_pred*mask, chi_gt*mask).item():.2f}, {snr=}, back(ppm)={scale}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 # %%
 imshow_3d(chi_pred, f'chi_cosmos rmse={rmse(chi_pred, chi_gt).item():.2f}, {snr=}, back(ppm)={scale}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
@@ -230,7 +231,7 @@ device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
-model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50, mask_chi=True).to(device)
+model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50).to(device)
 
 model.load_state_dict(torch.load("checkpoints_scratch3/model_best.pth" , map_location=device), strict=True)
 
