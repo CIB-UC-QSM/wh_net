@@ -1572,7 +1572,7 @@ wheels = [
 [[package]]
 name = "wh-net"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "comet-ml" },
     { name = "matplotlib" },

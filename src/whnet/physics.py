@@ -135,7 +135,7 @@ def forward_simulation(
         kernel = continuous_dipole_kernel(chi_map.shape, voxel_size)
 
     phase = np.real(np.fft.ifftn(kernel * np.fft.fftn(chi_map * mask)))
-    scale = np.pi*0.99 / np.max(np.abs(phase))
+    scale = np.pi * 0.99 / np.max(np.abs(phase))
     signal = magn * np.exp(1j * phase * scale)
 
     signal = signal + (

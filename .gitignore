@@ -225,3 +225,11 @@ __marimo__/
 
 checkpoints*/
 *.nii*
+
+# Repository-local research data and generated artifacts
+/data/*
+!/data/README.md
+/artifacts/*
+!/artifacts/README.md
+*.orig
+*.zip

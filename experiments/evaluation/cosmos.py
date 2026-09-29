@@ -1,64 +1,70 @@
 #%%
+1+1
+#%%
 import matplotlib.pyplot as plt
-from wh_net import ProximalNetwork, ADMMUnrolledNet
-from utils import continuous_dipole_kernel, imshow_3d, rmse
+from whnet.model import ProximalNetwork, ADMMUnrolledNet
+from whnet.physics import continuous_dipole_kernel, imshow_3d, rmse
+from whnet.paths import (
+    CHECKPOINTS_DIR,
+    EVALUATION_DATA_DIR,
+    EVALUATION_VOLUMES_DIR,
+    EXPORTS_DIR,
+)
 from scipy.io import loadmat
 import torch.nn.functional as F
 import torch
 from torch.amp import autocast
 import numpy as np
-import nibabel as nib
-#%%
-factor = 0.325
-pad = 20
 
-#%%
-def pad_to_sqr_shape(volume, zero_pad):
+def pad_to_sqr_shape(
+    volume, zero_pad):
     x, y, z = volume.shape
-    max_size = (max_o:=np.max([x, y, z])) + 2*zero_pad
+    max_size = np.max([x, y, z]) + 2*zero_pad
     new_volume = np.zeros(3 * (max_size,))
-    dx = (max_o - x)//2 + zero_pad
-    dy = (max_o - y)//2 + zero_pad
-    dz = (max_o - z)//2 + zero_pad
-    new_volume[dx:x+dx, dy:y+dy, dz:z+dz] = volume
+    new_volume[zero_pad:x+zero_pad, zero_pad:y+zero_pad, zero_pad:z+zero_pad] = volume
     return new_volume
 
-msk = loadmat('mask_final.mat')['mask_final']
-phase = loadmat('Sim2.mat')['phase']
-w = loadmat('sim2_w.mat')['w']
-chi_gt = nib.load('Sim2ChiGT.nii.gz').get_fdata()
-
-coords = np.argwhere(msk)
-z_min, y_min, x_min = coords.min(axis=0)
-z_max, y_max, x_max = coords.max(axis=0) + 1
-
-msk = pad_to_sqr_shape(msk[z_min:z_max, y_min:y_max, x_min:x_max], pad)
-phase = pad_to_sqr_shape(phase[z_min:z_max, y_min:y_max, x_min:x_max], pad)
-chi_gt = pad_to_sqr_shape(chi_gt[z_min:z_max, y_min:y_max, x_min:x_max], pad)
-w = pad_to_sqr_shape(w[z_min:z_max, y_min:y_max, x_min:x_max], pad)
-imshow_3d(chi_gt, 'chi_gt', rango=(-0.1, 0.1), angles=(-90, -90, 90))
-imshow_3d(w, 'w', rango=(0, 1), angles=(-90, -90, 90))
-
-
-#%%
+factor = 0.2125
 
 SPATIAL = (-3, -2, -1)
+pad = 12
 
-phase = torch.from_numpy(phase).unsqueeze(0).float()/factor
-msk = torch.from_numpy(msk).unsqueeze(0).float()
+chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat(EVALUATION_DATA_DIR / "chi_cosmos.mat")['chi_cosmos'], pad)).unsqueeze(0).float()/factor
+msk = torch.from_numpy(pad_to_sqr_shape(loadmat(EVALUATION_DATA_DIR / "msk.mat")['msk'], pad)).unsqueeze(0).float()
 
-# W = msk.clone()
-W = torch.from_numpy(w).unsqueeze(0).float()
+W = torch.from_numpy(pad_to_sqr_shape(loadmat(EVALUATION_DATA_DIR / "msk.mat")['msk'], pad)).unsqueeze(0).float()
+
       
-D = torch.from_numpy(continuous_dipole_kernel(phase.shape[-3:])).unsqueeze(0).float()
+D = torch.from_numpy(continuous_dipole_kernel(chi.shape[-3:])).unsqueeze(0).float()
+
+chi_k = torch.fft.fftn(chi * msk, dim=SPATIAL)
+local = torch.real(torch.fft.ifftn(D * chi_k, dim=SPATIAL)) * msk
 
 
+msk_dil = F.max_pool3d(msk.unsqueeze(0), kernel_size=7, stride=1, padding=3).squeeze(0)
+scale = 10
+ext_k = torch.fft.fftn((1.0 - msk_dil) * scale, dim=SPATIAL)
+phi = torch.real(torch.fft.ifftn(D * ext_k, dim=SPATIAL)) * msk
+
+inside = msk > 0
+if inside.sum() > 1:
+    field_std = torch.max(local[inside].abs())
+else:
+    field_std = torch.tensor(0.0)
+
+# local[:, 92, 92, 92] = 20
+# local[:, 92, 92, 93] = -20
+
+snr = 100
+noise_std = field_std / snr
+phase = msk * (local + torch.randn_like(local) * noise_std + phi)
 phase = phase.unsqueeze(0)
 msk = msk.unsqueeze(0)
 D = D.unsqueeze(0)
 W = W.unsqueeze(0)
 
-imshow_3d(phase.squeeze().numpy(), f'Local', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(phase.squeeze().numpy(), f'Total Field {snr=} bg magnitude={scale}ppm', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(local.squeeze().numpy(), f'Local Field', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 
 #%%
@@ -71,7 +77,7 @@ net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
 model = ADMMUnrolledNet(net_chi, net_phi, num_iters=100).to(device)
 
-model.load_state_dict(torch.load("checkpoints_scratch5/model_best.pth" , map_location=device), strict=True)
+model.load_state_dict(torch.load(CHECKPOINTS_DIR / "checkpoints_scratch7" / "model_best.pth", map_location=device), strict=True)
 
 @torch.no_grad()
 def evaluate(model, phase_in, mask, D, W):
@@ -88,9 +94,9 @@ print(chi_preds[-1].shape)
 
 
 # %%
-chi_pred = chi_preds[-1].squeeze().numpy() * factor
-phi_pred = phi_preds[-1].squeeze().numpy()
-mask = msk.squeeze().numpy()
+chi_pred = chi_preds[-1].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad] * factor
+phi_pred = phi_preds[-1].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]
+mask = msk.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]
 imshow_3d(chi_pred, f'chi_cosmos rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 imshow_3d(phi_pred, 'phi_pred', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
@@ -98,54 +104,64 @@ imshow_3d(phi_pred, 'phi_pred', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 # %%
 errores = []
 for i, chi in enumerate(chi_preds):
-    chi_pred = chi.squeeze().numpy() * factor
+    chi_pred = chi.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]* factor
     print(i, val:=rmse(chi_pred, chi_gt))
     errores.append(val)
 
-chi_pred = chi_preds[np.argmin(errores)].squeeze().numpy()* factor
-imshow_3d(chi_pred, f'rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+chi_pred = chi_preds[np.argmin(errores)].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad] * factor
+phi_pred = phi_preds[np.argmin(errores)].squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad] * factor
+
+imshow_3d(chi_pred, f'chi_cosmos rmse={rmse(chi_pred, chi_gt).item():.2f}, {snr=}, back(ppm)={scale}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+# %%
+err = np.asarray(errores)
+plt.figure()
+plt.plot(err)
+plt.plot(np.argmin(err), err[np.argmin(err)], 'ro')
+plt.show()
 
 # %%
-imshow_3d(chi_pred, f'rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(chi_pred, f'Predicted Chi rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(mask*phi_pred, f'Predicted Phih rmse={rmse(phi_pred*mask, mask*phi.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(mask*phi.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad], f'Predicted Phih rmse={rmse(phi_pred*mask, mask*phi.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+
 imshow_3d(chi_gt, 'Ground Truth', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 imshow_3d(chi_pred-chi_gt, 'chi_pred-chi_gt', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 #%%
 grid_search = []
 for factor in np.linspace(0.1, 1, 9):
-    for pad in [10, 20, 30]:
+    for pad in [12, 20]:
 
-        
-        msk = loadmat('mask_final.mat')['mask_final']
-        phase = loadmat('Sim2.mat')['phase']
-        chi_gt = nib.load('Sim2ChiGT.nii.gz').get_fdata()
+        chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat(EVALUATION_DATA_DIR / "chi_cosmos.mat")['chi_cosmos'], pad)).unsqueeze(0).float() / factor
+        msk = torch.from_numpy(pad_to_sqr_shape(loadmat(EVALUATION_DATA_DIR / "msk.mat")['msk'], pad)).unsqueeze(0).float()
+        W = torch.from_numpy(pad_to_sqr_shape(loadmat(EVALUATION_DATA_DIR / "msk.mat")['msk'], pad)).unsqueeze(0).float()
+        D = torch.from_numpy(continuous_dipole_kernel(chi.shape[-3:])).unsqueeze(0).float()
+        chi_k = torch.fft.fftn(chi * msk, dim=SPATIAL)
+        local = torch.real(torch.fft.ifftn(D * chi_k, dim=SPATIAL)) * msk
 
-        coords = np.argwhere(msk)
-        z_min, y_min, x_min = coords.min(axis=0)
-        z_max, y_max, x_max = coords.max(axis=0) + 1
+        msk_dil = F.max_pool3d(msk.unsqueeze(0), kernel_size=7, stride=1, padding=3).squeeze(0)
+        ext_k = torch.fft.fftn((1.0 - msk_dil) * scale, dim=SPATIAL)
+        phi = torch.real(torch.fft.ifftn(D * ext_k, dim=SPATIAL)) * msk
 
-        msk = pad_to_sqr_shape(msk[z_min:z_max, y_min:y_max, x_min:x_max], pad)
-        phase = pad_to_sqr_shape(phase[z_min:z_max, y_min:y_max, x_min:x_max], pad)
-        chi_gt = pad_to_sqr_shape(chi_gt[z_min:z_max, y_min:y_max, x_min:x_max], pad)
-
-        phase = torch.from_numpy(phase).unsqueeze(0).float()/factor
-        msk = torch.from_numpy(msk).unsqueeze(0).float()
-
-        W = msk.clone()
-            
-        D = torch.from_numpy(continuous_dipole_kernel(phase.shape[-3:])).unsqueeze(0).float()
-
+        inside = msk > 0
+        if inside.sum() > 1:
+            field_std = torch.max(local[inside].abs())
+        else:
+            field_std = torch.tensor(0.0)
+        noise_std = field_std / snr
+        phase = msk * (local + torch.randn_like(local) * noise_std + phi)
 
         phase = phase.unsqueeze(0)
         msk = msk.unsqueeze(0)
         D = D.unsqueeze(0)
         W = W.unsqueeze(0)
 
+
         chi_preds, phi_preds = evaluate(model, phase, msk, D, W)
 
         errores = []
         for i, chi in enumerate(chi_preds):
-            chi_pred = chi.squeeze().numpy() * factor
+            chi_pred = chi.squeeze().numpy()[pad:160+pad, pad:160+pad, pad:160+pad]* factor
             val=rmse(chi_pred, chi_gt)
             errores.append(val)
 
@@ -190,39 +206,40 @@ print(grid_search[idx])
 
 
 # %%
+import nibabel as nib
 
 def save_nii(name, img):
     TE = 25e-3      # Tiempo de eco en segundos (25 ms)
-    B0 = 7     # Campo magnético en Teslas
+    B0 = 3     # Campo magnético en Teslas
     gyro = 2 * np.pi * 42.58e6 
     phs_scale = TE * gyro * B0 * 1e-6 
-    true_phase = img.squeeze().numpy() * phs_scale
+    true_phase = img.squeeze()[pad:160+pad, pad:160+pad, pad:160+pad].numpy() * phs_scale
     phase_wrapped = np.angle(np.exp(1j * true_phase))
     affine = np.eye(4)
 
     nifti_img = nib.Nifti1Image(phase_wrapped, affine)
     nib.save(nifti_img, name)
-save_nii('input_phase_sim2.nii', phase*factor)
+save_nii(EXPORTS_DIR / "input_phase.nii", phase*factor)
 
 # %%
 
-msk_s = msk.squeeze().numpy()
+msk_s = msk.squeeze()[pad:160+pad, pad:160+pad, pad:160+pad].numpy()
 
 affine = np.eye(4)
 
 nifti_img = nib.Nifti1Image(msk_s, affine)
-nib.save(nifti_img, 'input_mask_sim2.nii')
+nib.save(nifti_img, EXPORTS_DIR / "input_mask.nii")
 
 # %%
 
-pred_iqsm = nib.load('iQSM.nii.gz').get_fdata()
-imshow_3d(pred_iqsm, f'pred_iqsm rmse={rmse(pred_iqsm, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, -90))
-imshow_3d(chi_pred, f'pred_whnet rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, -90))
+pred_iqsm = nib.load(EVALUATION_VOLUMES_DIR / "iQSM.nii.gz").get_fdata()
+imshow_3d(pred_iqsm, f'pred_iqsm rmse={rmse(pred_iqsm, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(chi_pred, f'pred_whnet rmse={rmse(chi_pred, chi_gt).item():.2f}', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 # %%
-imshow_3d(pred_iqsm-chi_gt, 'pred_iqsm-chi_gt', rango=(-0.1, 0.1), angles=(-90, -90, -90))
-imshow_3d(chi_pred-chi_gt, 'chi_pred-chi_gt', rango=(-0.1, 0.1), angles=(-90, -90, -90))
-imshow_3d(chi_pred-pred_iqsm, 'chi_pred-pred_iqsm', rango=(-0.1, 0.1), angles=(-90, -90, -90))
+imshow_3d(pred_iqsm-chi_gt, 'pred_iqsm-chi_gt', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(chi_pred-chi_gt, 'chi_pred-chi_gt', rango=(-0.1, 0.1), angles=(-90, -90, 90))
+imshow_3d(chi_pred-pred_iqsm, 'chi_pred-pred_iqsm', rango=(-0.1, 0.1), angles=(-90, -90, 90))
 
 # %%
 
@@ -237,15 +254,15 @@ net_chi = ProximalNetwork().to(device)
 net_phi = ProximalNetwork().to(device)
 model = ADMMUnrolledNet(net_chi, net_phi, num_iters=50, mask_chi=True).to(device)
 
-model.load_state_dict(torch.load("checkpoints_scratch3/model_best.pth" , map_location=device), strict=True)
+model.load_state_dict(torch.load(CHECKPOINTS_DIR / "checkpoints_scratch3" / "model_best.pth", map_location=device), strict=True)
 
 # grid_search = []
 for snr in np.linspace(10, 100, 7):
     for back in range(1, 6):
 
-        chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat('chi_cosmos.mat')['chi_cosmos'], pad)).unsqueeze(0).float() /factor
-        msk = torch.from_numpy(pad_to_sqr_shape(loadmat('msk.mat')['msk'], pad)).unsqueeze(0).float()
-        W = torch.from_numpy(pad_to_sqr_shape(loadmat('msk.mat')['msk'], pad)).unsqueeze(0).float()
+        chi = torch.from_numpy(pad_to_sqr_shape(chi_gt:=loadmat(EVALUATION_DATA_DIR / "chi_cosmos.mat")['chi_cosmos'], pad)).unsqueeze(0).float() /factor
+        msk = torch.from_numpy(pad_to_sqr_shape(loadmat(EVALUATION_DATA_DIR / "msk.mat")['msk'], pad)).unsqueeze(0).float()
+        W = torch.from_numpy(pad_to_sqr_shape(loadmat(EVALUATION_DATA_DIR / "msk.mat")['msk'], pad)).unsqueeze(0).float()
         D = torch.from_numpy(continuous_dipole_kernel(chi.shape[-3:])).unsqueeze(0).float()
         chi_k = torch.fft.fftn(chi * msk, dim=SPATIAL)
         local = torch.real(torch.fft.ifftn(D * chi_k, dim=SPATIAL)) * msk
@@ -278,7 +295,7 @@ for snr in np.linspace(10, 100, 7):
 
         # grid_search.append((np.min(errores), snr, back))
 
-        save_nii(f'./inputs/phase_{int(snr)}_{back}.nii', phase*factor)
+        save_nii(EXPORTS_DIR / "benchmark_inputs" / f"phase_{int(snr)}_{back}.nii", phase*factor)
 #%%
 errs = [x[0] for x in grid_search]
 idx = np.argmin(errs)
@@ -325,7 +342,7 @@ plt.show()
 grid_search_iqsm = []
 for snr in np.linspace(10, 100, 7):
     for back in range(1, 6):
-        pred_iqsm = nib.load(f'iQSM_{int(snr)}_{back}.nii.gz').get_fdata()
+        pred_iqsm = nib.load(EVALUATION_VOLUMES_DIR / f"iQSM_{int(snr)}_{back}.nii.gz").get_fdata()
         val=rmse(pred_iqsm, chi_gt, mask==1)
         grid_search_iqsm.append((val, snr, back))
 
