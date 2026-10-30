@@ -1,7 +1,7 @@
 [project]
 name = "wh-net"
 version = "0.1.0"
-description = "Learned unrolled ADMM for quantitative susceptibility mapping"
+description = "WHNet and WH-TV reconstruction for quantitative susceptibility mapping"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,10 +17,6 @@ dependencies = [
 
 [project.scripts]
 whnet-train = "whnet.training:main"
-whnet-flow-train = "whnet.flow_training:main"
-whnet-flow-tune = "whnet.flow_tuning:main"
-whnet-flow-evaluate = "whnet.flow_evaluation:main"
-whnet-flow-external-evaluate = "whnet.flow_external_validation:main"
 wh-tv-evaluate = "whnet.adaptive_wh_tv_validation:main"
 wh-tv-train = "whnet.adaptive_wh_tv_training:main"
 
