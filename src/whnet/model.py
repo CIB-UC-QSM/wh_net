@@ -278,10 +278,12 @@ class EfficientADMMUnrolledNet(ADMMUnrolledNet):
         eps=1e-6,
         normalize_input=True,
         checkpoint_steps=True,
+        input_scale_floor=1e-6,
     ):
         super().__init__(chinet, phinet, num_iters, eps)
         self.register_buffer("_pipeline_version", torch.tensor(2, dtype=torch.int64))
         self.normalize_input = normalize_input
+        self.input_scale_floor = input_scale_floor
         self.checkpoint_steps = checkpoint_steps
         self.last_num_iters = 0
         self.train(self.training)
@@ -374,7 +376,7 @@ class EfficientADMMUnrolledNet(ADMMUnrolledNet):
         count = mask.sum(dim=SPATIAL_DIMS).clamp_min(1.0)
         scale = torch.ones_like(count)
         if self.normalize_input:
-            scale = self._rms(phase, mask, count).clamp_min(1e-3)
+            scale = self._rms(phase, mask, count).clamp_min(self.input_scale_floor)
         scale = scale[..., None, None, None]
         phase = phase / scale
         # Accept full kernels for compatibility and half kernels from the new loader.

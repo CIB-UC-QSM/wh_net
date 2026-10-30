@@ -1,4 +1,4 @@
-"""COSMOS and sim2 validation for the adaptive WH-TV model.
+"""Shared COSMOS and sim2 inputs and adaptive WH-TV validation.
 
 The loaders intentionally reproduce the inputs used by the existing WHNet
 evaluations. COSMOS uses the completed SNR=100/background=10 simulation, while
@@ -9,20 +9,22 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import time
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 import numpy as np
 import torch
 from torch import Tensor
 
-from .adaptive_wh_tv import AdaptiveWHTV
 from .paths import EVALUATION_DATA_DIR, EVALUATION_VOLUMES_DIR, RUNS_DIR
 from .physics import continuous_dipole_kernel
+
+if TYPE_CHECKING:
+    from .adaptive_wh_tv import AdaptiveWHTV
 
 COSMOS_REQUIRED_KEYS = {"phase", "mask", "dipole", "chi", "background"}
 
@@ -38,6 +40,7 @@ class ExternalValidationCase:
     chi: Tensor
     background: Tensor | None
     factor: float
+    weight: Tensor | None = None
     output_pad: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -153,8 +156,7 @@ def load_sim2_case(*, factor: float = 0.264, pad: int = 20) -> ExternalValidatio
             raise FileNotFoundError(path)
     phase = np.asarray(loadmat(phase_path)["phase"], dtype=np.float32)
     mask = np.asarray(loadmat(mask_path)["mask_final"], dtype=np.float32)
-    # The adaptive model estimates fidelity precision, but loading the WHNet
-    # weight file here verifies that the legacy benchmark inputs are aligned.
+    # The adaptive model estimates fidelity precision; WHNet uses this map.
     legacy_weight = np.asarray(loadmat(weight_path)["w"], dtype=np.float32)
     chi = np.asarray(nib.load(chi_path).get_fdata(dtype=np.float32))
     if mask.shape != chi.shape or mask.shape != legacy_weight.shape:
@@ -167,6 +169,8 @@ def load_sim2_case(*, factor: float = 0.264, pad: int = 20) -> ExternalValidatio
         raise ValueError("sim2 phase does not cover the legacy mask coordinates")
     if not np.isfinite(phase).all() or not np.isfinite(chi).all():
         raise ValueError("sim2 contains nonfinite values")
+    if not np.isfinite(legacy_weight).all() or (legacy_weight < 0).any():
+        raise ValueError("sim2 WHNet weights must be finite and nonnegative")
     if not np.isin(mask, (0, 1)).all() or not mask.any():
         raise ValueError("sim2 mask must be nonempty and binary")
     coordinates = np.argwhere(mask)
@@ -178,8 +182,6 @@ def load_sim2_case(*, factor: float = 0.264, pad: int = 20) -> ExternalValidatio
     phase = _center_pad(phase[crop], pad) / factor
     mask = _center_pad(mask[crop], pad)
     chi = _center_pad(chi[crop], pad) / factor
-    # Retain this check even though WHNet's supplied W is deliberately not an
-    # adaptive-model input: it catches accidental preprocessing divergence.
     legacy_weight = _center_pad(legacy_weight[crop], pad)
     if phase.shape != mask.shape or phase.shape != chi.shape:
         raise ValueError("sim2 preprocessing produced inconsistent shapes")
@@ -199,6 +201,7 @@ def load_sim2_case(*, factor: float = 0.264, pad: int = 20) -> ExternalValidatio
         chi=tensor(chi),
         background=None,
         factor=float(factor),
+        weight=tensor(legacy_weight),
         output_pad=0,
         metadata={
             "phase": str(phase_path.resolve()),
@@ -235,6 +238,32 @@ def load_external_cases(
     return tuple(cases)
 
 
+def physical_external_cases(
+    cases: Iterable[ExternalValidationCase],
+) -> tuple[ExternalValidationCase, ...]:
+    """Restore stored solver-unit inputs to physical units before inference."""
+    physical = []
+    for case in cases:
+        if not np.isfinite(case.factor) or case.factor <= 0:
+            raise ValueError(f"{case.name} has an invalid susceptibility factor")
+        if case.factor == 1:
+            physical.append(case)
+            continue
+        physical.append(
+            replace(
+                case,
+                phase=case.phase * case.factor,
+                chi=case.chi * case.factor,
+                background=(
+                    None if case.background is None else case.background * case.factor
+                ),
+                factor=1.0,
+                metadata={**case.metadata, "stored_solver_factor": case.factor},
+            )
+        )
+    return tuple(physical)
+
+
 def masked_nrmse(prediction: Tensor, reference: Tensor, mask: Tensor) -> float:
     selected = mask.bool()
     return float(
@@ -261,8 +290,9 @@ def comparison_figure(
     *,
     title: str,
     method_label: str = "Adaptive WH-TV",
+    display_limit: float | None = None,
 ):
-    """Create the same reference/reconstruction/error image used by WHNet."""
+    """Show orthogonal ground-truth, reconstruction, and difference slices."""
     import matplotlib.pyplot as plt
 
     center = tuple(size // 2 for size in reference.shape)
@@ -271,26 +301,48 @@ def comparison_figure(
         lambda value: value[:, center[1]],
         lambda value: value[:, :, center[2]],
     )
-    image_limit = max(
-        float(
-            np.percentile(
-                np.abs(np.concatenate((reference.ravel(), reconstruction.ravel()))),
-                99.5,
-            )
-        ),
-        float(np.finfo(np.float32).eps),
+    if display_limit is not None and display_limit <= 0:
+        raise ValueError("display_limit must be positive")
+    image_limit = (
+        display_limit
+        if display_limit is not None
+        else max(
+            float(
+                np.percentile(
+                    np.abs(np.concatenate((reference.ravel(), reconstruction.ravel()))),
+                    99.5,
+                )
+            ),
+            float(np.finfo(np.float32).eps),
+        )
     )
-    error_limit = max(
-        float(np.percentile(np.abs(error), 99.5)),
-        float(np.finfo(np.float32).eps),
+    error_limit = (
+        display_limit
+        if display_limit is not None
+        else max(
+            float(np.percentile(np.abs(error), 99.5)),
+            float(np.finfo(np.float32).eps),
+        )
     )
     rows = (
-        (reference, "Reference", "gray", image_limit),
-        (reconstruction, method_label, "gray", image_limit),
-        (error, "Error (reconstruction - reference)", "coolwarm", error_limit),
+        (reference, f"Ground truth (±{image_limit:.3g} ppm)", "gray", image_limit),
+        (
+            reconstruction,
+            f"{method_label} (±{image_limit:.3g} ppm)",
+            "gray",
+            image_limit,
+        ),
+        (
+            error,
+            f"Difference (reconstruction - truth, ±{error_limit:.3g} ppm)",
+            "coolwarm",
+            error_limit,
+        ),
     )
     figure, axes = plt.subplots(3, 3, figsize=(11, 10), constrained_layout=True)
     figure.suptitle(title)
+    for axis, orientation in zip(axes[0], ("Axial", "Coronal", "Sagittal")):
+        axis.set_title(orientation)
     for row, (volume, label, cmap, limit) in enumerate(rows):
         for column, select in enumerate(selectors):
             axes[row, column].imshow(
@@ -298,7 +350,15 @@ def comparison_figure(
             )
             axes[row, column].axis("off")
             if column == 0:
-                axes[row, column].set_title(label)
+                axes[row, column].text(
+                    -0.06,
+                    0.5,
+                    label,
+                    transform=axes[row, column].transAxes,
+                    rotation=90,
+                    va="center",
+                    ha="right",
+                )
     return figure
 
 

@@ -21,6 +21,7 @@ from .adaptive_wh_tv import AdaptiveWHTV, AdaptiveWHTVOutput, WHTVParameterNet
 from .adaptive_wh_tv_validation import (
     evaluate_external_cases,
     load_external_cases,
+    physical_external_cases,
 )
 from .data import FieldSynthesizer, TRAINING_CONDITIONS
 from .paths import RUNS_DIR, TRAINING_CACHE_DIR, TRAINING_DATA_DIR
@@ -72,10 +73,11 @@ class AdaptiveWHTVTrainConfig:
     memory_fraction: float = 0.25
     channels_last_3d: bool = True
     comet: bool = False
+    local_perturbations: bool = True
     external_validation: bool = True
     external_validation_every: int = 1
     cosmos_simulation: str | None = None
-    sim2_factor: float = 0.264
+    sim2_factor: float = 1.0
     sim2_pad: int = 20
     allow_short_solver: bool = False
     max_steps: int = 0
@@ -499,6 +501,10 @@ def run_adaptive_wh_tv_training(cfg: AdaptiveWHTVTrainConfig) -> None:
                 "event": "training_started",
                 "step": global_step,
                 "train_volumes": len(train_loader.dataset),
+                "synthetic_train_volumes": sum(
+                    record["subject"].startswith("synthetic:")
+                    for record in train_loader.dataset.records
+                ),
                 "validation_realizations": len(val_loader.dataset),
                 "optimizer_steps_per_epoch": groups_per_epoch,
                 "solver_iterations": cfg.solver_iterations,
@@ -557,7 +563,7 @@ def run_adaptive_wh_tv_training(cfg: AdaptiveWHTVTrainConfig) -> None:
                 for _ in range(micro_count):
                     cpu_batch = next(batches)
                     phase, mask, _, dipole, chi_target, background_target = synthesizer(
-                        cpu_batch
+                        cpu_batch, perturb_local_field=cfg.local_perturbations
                     )
                     fraction = phase.shape[0] / expected_samples
                     with _autocast_context(device):
@@ -672,10 +678,12 @@ def run_adaptive_wh_tv_training(cfg: AdaptiveWHTVTrainConfig) -> None:
                     and (epoch + 1) % cfg.external_validation_every == 0
                 ):
                     if external_cases is None:
-                        external_cases = load_external_cases(
-                            cosmos_simulation=cfg.cosmos_simulation,
-                            sim2_factor=cfg.sim2_factor,
-                            sim2_pad=cfg.sim2_pad,
+                        external_cases = physical_external_cases(
+                            load_external_cases(
+                                cosmos_simulation=cfg.cosmos_simulation,
+                                sim2_factor=cfg.sim2_factor,
+                                sim2_pad=cfg.sim2_pad,
+                            )
                         )
                     external_result = evaluate_external_cases(
                         model,
@@ -763,7 +771,9 @@ def main() -> None:
     arguments = vars(parser.parse_args())
     if arguments.get("resume"):
         saved = torch.load(arguments["resume"], map_location="cpu", weights_only=False)
-        merged = saved["config"] | arguments
+        saved_config = dict(saved["config"])
+        saved_config.setdefault("local_perturbations", False)
+        merged = saved_config | arguments
         merged["features"] = tuple(merged["features"])
         cfg = AdaptiveWHTVTrainConfig(**merged)
     else:

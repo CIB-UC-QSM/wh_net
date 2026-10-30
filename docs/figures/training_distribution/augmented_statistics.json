@@ -1,0 +1,580 @@
+{
+  "method": {
+    "seed": 0,
+    "epoch": 0,
+    "train_records": 1236,
+    "validation_subjects": 16,
+    "field_examples_per_source_per_mode": 8,
+    "revised_chi_rms_core_ppm": [
+      0.018,
+      0.04
+    ],
+    "revised_chi_rms_tail_ppm": [
+      0.04,
+      0.08
+    ],
+    "revised_chi_rms_tail_probability": 0.05
+  },
+  "distributions": {
+    "Current loader": {
+      "volumes": 1236,
+      "masked_voxels": 683830214,
+      "mask_fraction_mean": 0.13507341087365998,
+      "mask_fraction_min": 0.060126708984375,
+      "mask_fraction_max": 0.257871826171875,
+      "chi_mean_ppm": 0.0004524305017782338,
+      "chi_std_ppm": 0.06620756747112136,
+      "chi_min_ppm": -1.2376041412353516,
+      "chi_p01_ppm": -0.18762507805788975,
+      "chi_p05_ppm": -0.10291351134269583,
+      "chi_p25_ppm": -0.02654645649061994,
+      "chi_median_ppm": -0.0007904029289134088,
+      "chi_p75_ppm": 0.02605293792479411,
+      "chi_p95_ppm": 0.10751498290312943,
+      "chi_p99_ppm": 0.2035869293384881,
+      "chi_max_ppm": 1.8528597354888916,
+      "positive_fraction": 0.49229554808761344,
+      "negative_fraction": 0.5077044519123866,
+      "abs_below_0005_fraction": 0.10329510974196293,
+      "abs_above_005_fraction": 0.2899894461229524,
+      "abs_above_010_fraction": 0.11028760276450728,
+      "abs_above_020_fraction": 0.01866418701411751,
+      "volume_rms_p10_p50_p90_ppm": [
+        0.018661084584891796,
+        0.051802366971969604,
+        0.10572619363665581
+      ],
+      "volume_weighted_chi_p01_p50_p99_ppm": [
+        -0.18949999999999978,
+        -0.001000000000000334,
+        0.20500000000000007
+      ],
+      "volume_weighted_abs_above_005_fraction": 0.29333166295180113,
+      "source_counts": {
+        "original": 585,
+        "synthetic": 651
+      },
+      "source_summaries": {
+        "original": {
+          "volumes": 585,
+          "masked_voxels": 327965882,
+          "mask_fraction_mean": 0.13687144514556623,
+          "mask_fraction_min": 0.060126708984375,
+          "mask_fraction_max": 0.257871826171875,
+          "chi_mean_ppm": -0.00011056441330998679,
+          "chi_std_ppm": 0.04725928413499587,
+          "chi_min_ppm": -1.2376041412353516,
+          "chi_p01_ppm": -0.11990972887465726,
+          "chi_p05_ppm": -0.07011411285111581,
+          "chi_p25_ppm": -0.02059117906994427,
+          "chi_median_ppm": -0.0012996049309209287,
+          "chi_p75_ppm": 0.01735822277622882,
+          "chi_p95_ppm": 0.07246716061653535,
+          "chi_p99_ppm": 0.1502545102562286,
+          "chi_max_ppm": 1.8528597354888916,
+          "positive_fraction": 0.4769287434599676,
+          "negative_fraction": 0.5230712565400324,
+          "abs_below_0005_fraction": 0.16972777064658207,
+          "abs_above_005_fraction": 0.18615698568304126,
+          "abs_above_010_fraction": 0.045377113342539695,
+          "abs_above_020_fraction": 0.005633476228481596
+        },
+        "synthetic": {
+          "volumes": 651,
+          "masked_voxels": 355864332,
+          "mask_fraction_mean": 0.1334576657906106,
+          "mask_fraction_min": 0.100254150390625,
+          "mask_fraction_max": 0.19328662109375,
+          "chi_mean_ppm": 0.0009712886937490522,
+          "chi_std_ppm": 0.0797767540769713,
+          "chi_min_ppm": -0.8220129013061523,
+          "chi_p01_ppm": -0.22079864706308377,
+          "chi_p05_ppm": -0.12913143732264284,
+          "chi_p25_ppm": -0.034731061364411474,
+          "chi_median_ppm": 0.002356015516195671,
+          "chi_p75_ppm": 0.036705206348835395,
+          "chi_p95_ppm": 0.13022012622809295,
+          "chi_p99_ppm": 0.22746817225905847,
+          "chi_max_ppm": 0.6750515103340149,
+          "positive_fraction": 0.5064576519570947,
+          "negative_fraction": 0.4935423480429053,
+          "abs_below_0005_fraction": 0.04207052422438335,
+          "abs_above_005_fraction": 0.38568182494895276,
+          "abs_above_010_fraction": 0.170109349424769,
+          "abs_above_020_fraction": 0.030673338175403315
+        }
+      }
+    },
+    "Revised loader": {
+      "volumes": 1236,
+      "masked_voxels": 690746624,
+      "mask_fraction_mean": 0.13643957322006472,
+      "mask_fraction_min": 0.060126708984375,
+      "mask_fraction_max": 0.257871826171875,
+      "chi_mean_ppm": 0.0001693916442027462,
+      "chi_std_ppm": 0.030838997756744833,
+      "chi_min_ppm": -1.1141815185546875,
+      "chi_p01_ppm": -0.0753812635435435,
+      "chi_p05_ppm": -0.045098610089646836,
+      "chi_p25_ppm": -0.016650576129879018,
+      "chi_median_ppm": -0.0009417539554541065,
+      "chi_p75_ppm": 0.01564205665657323,
+      "chi_p95_ppm": 0.04787498021954809,
+      "chi_p99_ppm": 0.08806446517344486,
+      "chi_max_ppm": 1.3840644359588623,
+      "positive_fraction": 0.48637592327921386,
+      "negative_fraction": 0.5136240767207861,
+      "abs_below_0005_fraction": 0.16554652752092205,
+      "abs_above_005_fraction": 0.08321344325527967,
+      "abs_above_010_fraction": 0.010216595716579282,
+      "abs_above_020_fraction": 0.0008740571130174644,
+      "volume_rms_p10_p50_p90_ppm": [
+        0.019619226455688477,
+        0.027907682582736015,
+        0.038693664595484734
+      ],
+      "volume_weighted_chi_p01_p50_p99_ppm": [
+        -0.0754999999999999,
+        -0.0015000000000000568,
+        0.08750000000000036
+      ],
+      "volume_weighted_abs_above_005_fraction": 0.08280030343657908,
+      "source_counts": {
+        "original": 927,
+        "synthetic": 309
+      },
+      "source_summaries": {
+        "original": {
+          "volumes": 927,
+          "masked_voxels": 522138693,
+          "mask_fraction_mean": 0.13751377221758695,
+          "mask_fraction_min": 0.060126708984375,
+          "mask_fraction_max": 0.257871826171875,
+          "chi_mean_ppm": -0.00011619646408821912,
+          "chi_std_ppm": 0.031303083608981715,
+          "chi_min_ppm": -1.1141815185546875,
+          "chi_p01_ppm": -0.07627528243298197,
+          "chi_p05_ppm": -0.04475772473063012,
+          "chi_p25_ppm": -0.01677378631804712,
+          "chi_median_ppm": -0.001210666306107163,
+          "chi_p75_ppm": 0.014860925138093877,
+          "chi_p95_ppm": 0.047034620504640856,
+          "chi_p99_ppm": 0.09396044328023262,
+          "chi_max_ppm": 1.3840644359588623,
+          "positive_fraction": 0.4786915284211661,
+          "negative_fraction": 0.521308471578834,
+          "abs_below_0005_fraction": 0.1733892626877204,
+          "abs_above_005_fraction": 0.08125431531656284,
+          "abs_above_010_fraction": 0.012232112053032622,
+          "abs_above_020_fraction": 0.0011504223074308725
+        },
+        "synthetic": {
+          "volumes": 309,
+          "masked_voxels": 168607931,
+          "mask_fraction_mean": 0.13321697622749798,
+          "mask_fraction_min": 0.1005419921875,
+          "mask_fraction_max": 0.189264404296875,
+          "chi_mean_ppm": 0.0010537901461889147,
+          "chi_std_ppm": 0.029337701190697223,
+          "chi_min_ppm": -0.19714991748332977,
+          "chi_p01_ppm": -0.07289905655782788,
+          "chi_p05_ppm": -0.04597754148868514,
+          "chi_p25_ppm": -0.016219362584366865,
+          "chi_median_ppm": 0.0016322243601916075,
+          "chi_p75_ppm": 0.018413555930580704,
+          "chi_p95_ppm": 0.049714380831576234,
+          "chi_p99_ppm": 0.07515007230308414,
+          "chi_max_ppm": 0.24701395630836487,
+          "positive_fraction": 0.5101726679749128,
+          "negative_fraction": 0.48982733202508727,
+          "abs_below_0005_fraction": 0.1412594405182518,
+          "abs_above_005_fraction": 0.08928039689900472,
+          "abs_above_010_fraction": 0.00397502060564399,
+          "abs_above_020_fraction": 1.8219783504727307e-05
+        }
+      }
+    },
+    "COSMOS": {
+      "volumes": 1,
+      "masked_voxels": 933481,
+      "mask_fraction_mean": 0.14984836673995233,
+      "mask_fraction_min": 0.14984836673995233,
+      "mask_fraction_max": 0.14984836673995233,
+      "chi_mean_ppm": -8.590655027147846e-06,
+      "chi_std_ppm": 0.02799625175578228,
+      "chi_min_ppm": -0.2642402648925781,
+      "chi_p01_ppm": -0.05561139639639666,
+      "chi_p05_ppm": -0.036090121384297215,
+      "chi_p25_ppm": -0.015123532258064348,
+      "chi_median_ppm": -0.0021664660316127933,
+      "chi_p75_ppm": 0.011302158400452122,
+      "chi_p95_ppm": 0.03887062499999975,
+      "chi_p99_ppm": 0.10454132183908,
+      "chi_max_ppm": 0.3911397457122803,
+      "positive_fraction": 0.4556964737364767,
+      "negative_fraction": 0.5443035262635233,
+      "abs_below_0005_fraction": 0.2010324795041356,
+      "abs_above_005_fraction": 0.05050879450144138,
+      "abs_above_010_fraction": 0.011210726302945642,
+      "abs_above_020_fraction": 0.001377639180658203
+    },
+    "sim2": {
+      "volumes": 1,
+      "masked_voxels": 1366083,
+      "mask_fraction_mean": 0.1475092322643343,
+      "mask_fraction_min": 0.1475092322643343,
+      "mask_fraction_max": 0.1475092322643343,
+      "chi_mean_ppm": 2.7075137135970833e-06,
+      "chi_std_ppm": 0.028243195908417756,
+      "chi_min_ppm": -2.0338194370269775,
+      "chi_p01_ppm": -0.04525529497568861,
+      "chi_p05_ppm": -0.040538668457885264,
+      "chi_p25_ppm": -0.02552471129007756,
+      "chi_median_ppm": 0.0064152719665271935,
+      "chi_p75_ppm": 0.017553027744583612,
+      "chi_p95_ppm": 0.03407680604203139,
+      "chi_p99_ppm": 0.07789249999999993,
+      "chi_max_ppm": 0.2141311913728714,
+      "positive_fraction": 0.5798154284915338,
+      "negative_fraction": 0.42018457150846616,
+      "abs_below_0005_fraction": 0.09931094962751165,
+      "abs_above_005_fraction": 0.022828041927174265,
+      "abs_above_010_fraction": 0.006752151955627879,
+      "abs_above_020_fraction": 5.636553562265251e-05
+    }
+  },
+  "reference_fields": {
+    "cosmos": {
+      "chi_rms_ppm": 0.027996253222227097,
+      "local_rms_ppm": 0.008461587131023407,
+      "phase_rms_ppm": 0.18705543875694275,
+      "background_or_residual_rms_ppm": 0.1868295520544052,
+      "local_to_background_or_residual": 0.04529041063353496,
+      "residual_is_reference_background": true
+    },
+    "sim2": {
+      "chi_rms_ppm": 0.02824319712817669,
+      "local_rms_ppm": 0.008637410588562489,
+      "phase_rms_ppm": 0.009442951530218124,
+      "background_or_residual_rms_ppm": 0.0044332705438137054,
+      "local_to_background_or_residual": 1.9483156967750013,
+      "residual_is_reference_background": false
+    }
+  },
+  "observed_run": {
+    "run": "artifacts/runs/joint_20261002_214544",
+    "updates": 1873,
+    "clipped_both_fraction": 1.0,
+    "last_lr": 9.782124373605414e-05,
+    "previous_run": {
+      "last_lr": 5.0000038155120996e-06,
+      "clipped_both_fraction": 1.0
+    },
+    "validation": [
+      {
+        "epoch": 1,
+        "real_chi_nrmse": 0.6282256531218688,
+        "cosmos_chi_nrmse": 0.5036880373954773,
+        "sim2_chi_nrmse": 0.7881325483322144
+      },
+      {
+        "epoch": 2,
+        "real_chi_nrmse": 0.626812672863404,
+        "cosmos_chi_nrmse": 0.49616095423698425,
+        "sim2_chi_nrmse": 0.774636447429657
+      },
+      {
+        "epoch": 3,
+        "real_chi_nrmse": 0.7136388445893924,
+        "cosmos_chi_nrmse": 0.5688128471374512,
+        "sim2_chi_nrmse": 0.8071961998939514
+      },
+      {
+        "epoch": 4,
+        "real_chi_nrmse": 0.8128289605180423,
+        "cosmos_chi_nrmse": 0.7323116064071655,
+        "sim2_chi_nrmse": 0.8266692757606506
+      },
+      {
+        "epoch": 5,
+        "real_chi_nrmse": 0.7159707893927894,
+        "cosmos_chi_nrmse": 0.5810410380363464,
+        "sim2_chi_nrmse": 0.8870118856430054
+      },
+      {
+        "epoch": 6,
+        "real_chi_nrmse": 0.6836413679023584,
+        "cosmos_chi_nrmse": 0.5680510401725769,
+        "sim2_chi_nrmse": 0.8549047112464905
+      },
+      {
+        "epoch": 7,
+        "real_chi_nrmse": 0.8723220117390156,
+        "cosmos_chi_nrmse": 0.7231972813606262,
+        "sim2_chi_nrmse": 0.8794182538986206
+      }
+    ]
+  },
+  "training_field_examples": {
+    "Current loader": [
+      {
+        "source": "original",
+        "chi_rms": 0.05923403427004814,
+        "local_rms": 0.019596830010414124,
+        "background_rms": 1.4579275846481323,
+        "phase_rms": 1.4580565690994263,
+        "local_to_background": 0.013441566377878189
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.024142736569046974,
+        "local_rms": 0.006748417392373085,
+        "background_rms": 0.6155657172203064,
+        "phase_rms": 0.6155744194984436,
+        "local_to_background": 0.010962951928377151
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.0676448792219162,
+        "local_rms": 0.020233385264873505,
+        "background_rms": 0.4519389867782593,
+        "phase_rms": 0.452402263879776,
+        "local_to_background": 0.044770170003175735
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.019245438277721405,
+        "local_rms": 0.005813181400299072,
+        "background_rms": 0.014833863824605942,
+        "phase_rms": 0.01590057648718357,
+        "local_to_background": 0.3918858468532562
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.014165187254548073,
+        "local_rms": 0.004184796009212732,
+        "background_rms": 0.06329504400491714,
+        "phase_rms": 0.06359052658081055,
+        "local_to_background": 0.06611569970846176
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.031353093683719635,
+        "local_rms": 0.009257404133677483,
+        "background_rms": 0.33351290225982666,
+        "phase_rms": 0.3342403471469879,
+        "local_to_background": 0.02775725908577442
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.013136872090399265,
+        "local_rms": 0.004407424014061689,
+        "background_rms": 1.3293631076812744,
+        "phase_rms": 1.3294278383255005,
+        "local_to_background": 0.0033154403790831566
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.036478687077760696,
+        "local_rms": 0.01037770789116621,
+        "background_rms": 0.6241891384124756,
+        "phase_rms": 0.6247465014457703,
+        "local_to_background": 0.01662590354681015
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.08305767178535461,
+        "local_rms": 0.01310049183666706,
+        "background_rms": 1.0215024948120117,
+        "phase_rms": 1.0201197862625122,
+        "local_to_background": 0.012824728153645992
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.046563565731048584,
+        "local_rms": 0.010147353634238243,
+        "background_rms": 1.1959999799728394,
+        "phase_rms": 1.1967517137527466,
+        "local_to_background": 0.00848440919071436
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.0582406260073185,
+        "local_rms": 0.010125858709216118,
+        "background_rms": 1.6767382621765137,
+        "phase_rms": 1.675422191619873,
+        "local_to_background": 0.006039021536707878
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.03240720555186272,
+        "local_rms": 0.005504815373569727,
+        "background_rms": 0.5534219145774841,
+        "phase_rms": 0.5543566346168518,
+        "local_to_background": 0.009946868754923344
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.11038092523813248,
+        "local_rms": 0.023819688707590103,
+        "background_rms": 0.37744998931884766,
+        "phase_rms": 0.3839331269264221,
+        "local_to_background": 0.06310687214136124
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.08224193006753922,
+        "local_rms": 0.01499357633292675,
+        "background_rms": 1.8926944732666016,
+        "phase_rms": 1.8891881704330444,
+        "local_to_background": 0.007921815849840641
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.06076909974217415,
+        "local_rms": 0.013821479864418507,
+        "background_rms": 1.3450944423675537,
+        "phase_rms": 1.3487789630889893,
+        "local_to_background": 0.010275471955537796
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.05887620151042938,
+        "local_rms": 0.01122442539781332,
+        "background_rms": 0.15088263154029846,
+        "phase_rms": 0.15173210203647614,
+        "local_to_background": 0.07439176738262177
+      }
+    ],
+    "Revised loader": [
+      {
+        "source": "synthetic",
+        "chi_rms": 0.033635687083005905,
+        "local_rms": 0.005689161829650402,
+        "background_rms": 0.012412392534315586,
+        "phase_rms": 0.014285750687122345,
+        "local_to_background": 0.45834529399871826
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.07147154957056046,
+        "local_rms": 0.019296512007713318,
+        "background_rms": 0.09329300373792648,
+        "phase_rms": 0.09465836733579636,
+        "local_to_background": 0.2068377137184143
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.024437962099909782,
+        "local_rms": 0.005311319138854742,
+        "background_rms": 0.01046993862837553,
+        "phase_rms": 0.012208839878439903,
+        "local_to_background": 0.5072922706604004
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.01865898072719574,
+        "local_rms": 0.00543984305113554,
+        "background_rms": 0.1006067544221878,
+        "phase_rms": 0.10080073028802872,
+        "local_to_background": 0.054070357233285904
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.03833235800266266,
+        "local_rms": 0.008492403663694859,
+        "background_rms": 0.1881149709224701,
+        "phase_rms": 0.18861134350299835,
+        "local_to_background": 0.04514475166797638
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.035643789917230606,
+        "local_rms": 0.0067842579446733,
+        "background_rms": 0.0024464724119752645,
+        "phase_rms": 0.007563780061900616,
+        "local_to_background": 2.7730777263641357
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.039269544184207916,
+        "local_rms": 0.012993981130421162,
+        "background_rms": 0.020878866314888,
+        "phase_rms": 0.02488112263381481,
+        "local_to_background": 0.6223508715629578
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.03781482204794884,
+        "local_rms": 0.0059212446212768555,
+        "background_rms": 0.006594110745936632,
+        "phase_rms": 0.007886247709393501,
+        "local_to_background": 0.8979595303535461
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.019544050097465515,
+        "local_rms": 0.005871275905519724,
+        "background_rms": 0.015112119726836681,
+        "phase_rms": 0.01626746915280819,
+        "local_to_background": 0.3885143995285034
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.024740347638726234,
+        "local_rms": 0.004836085252463818,
+        "background_rms": 0.07456405460834503,
+        "phase_rms": 0.0740995705127716,
+        "local_to_background": 0.06485813111066818
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.021819880232214928,
+        "local_rms": 0.006322131026536226,
+        "background_rms": 0.022130830213427544,
+        "phase_rms": 0.022822409868240356,
+        "local_to_background": 0.28567075729370117
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.048814162611961365,
+        "local_rms": 0.009854092262685299,
+        "background_rms": 0.22780384123325348,
+        "phase_rms": 0.22804352641105652,
+        "local_to_background": 0.04325691983103752
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.036208175122737885,
+        "local_rms": 0.008233916945755482,
+        "background_rms": 0.06008179113268852,
+        "phase_rms": 0.060544610023498535,
+        "local_to_background": 0.13704513013362885
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.032195646315813065,
+        "local_rms": 0.005785483401268721,
+        "background_rms": 0.011564874090254307,
+        "phase_rms": 0.012141012586653233,
+        "local_to_background": 0.5002633929252625
+      },
+      {
+        "source": "original",
+        "chi_rms": 0.024078981950879097,
+        "local_rms": 0.00706354109570384,
+        "background_rms": 0.006012209691107273,
+        "phase_rms": 0.00938192568719387,
+        "local_to_background": 1.1748660802841187
+      },
+      {
+        "source": "synthetic",
+        "chi_rms": 0.03961874172091484,
+        "local_rms": 0.008567871525883675,
+        "background_rms": 0.05172096565365791,
+        "phase_rms": 0.05450979620218277,
+        "local_to_background": 0.16565567255020142
+      }
+    ]
+  }
+}

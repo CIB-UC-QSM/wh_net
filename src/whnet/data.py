@@ -14,12 +14,26 @@ SPATIAL = (-3, -2, -1)  # FFT solo sobre dimensiones espaciales
 TRAINING_CONDITIONS = {
     "snr_min": 40.0,
     "snr_max": 100.0,
-    "snr_definition": "masked RMS(local field) / masked RMS(noise)",
+    "snr_definition": "masked RMS(clean local field) / masked RMS(noise)",
     "exterior_source_amplitude_min": 0.01,
     "exterior_source_amplitude_max": 20.0,
     "reliability_min": 0.1,
     "background_model": "dipole field from sources outside the 7-voxel dilated mask",
+    "local_perturbation_probability": 0.1,
+    "local_perturbation_count_min": 1,
+    "local_perturbation_count_max": 3,
+    "local_perturbation_amplitude_min": 10.0,
+    "local_perturbation_amplitude_max": 100.0,
+    "local_perturbation_neighbor_probability": 0.5,
 }
+NEIGHBOR_OFFSETS = (
+    (-1, 0, 0),
+    (1, 0, 0),
+    (0, -1, 0),
+    (0, 1, 0),
+    (0, 0, -1),
+    (0, 0, 1),
+)
 
 
 class QSMDataset(Dataset):
@@ -152,9 +166,12 @@ def separable_dilation(mask):
 def training_records(data_dir, source_manifest=None):
     """Return explicit source identities; never silently split augmented files."""
     root = Path(data_dir)
+    manifest_path = Path(source_manifest) if source_manifest else root / "subjects.json"
     identities = (
-        json.loads(Path(source_manifest).read_text()) if source_manifest else None
+        json.loads(manifest_path.read_text()) if manifest_path.is_file() else None
     )
+    if source_manifest and identities is None:
+        raise FileNotFoundError(manifest_path)
     records = []
     for image in sorted(root.glob("image_*.pt")):
         index = int(image.stem.split("_")[-1])
@@ -180,14 +197,103 @@ def training_records(data_dir, source_manifest=None):
     return records
 
 
+def _sample_local_perturbations(
+    mask: torch.Tensor, generator: torch.Generator
+) -> list[tuple[tuple[int, int, int], float]]:
+    """Draw sparse local-field impulses using a per-sample CPU random stream."""
+    conditions = TRAINING_CONDITIONS
+    if (
+        torch.rand((), generator=generator).item()
+        >= conditions["local_perturbation_probability"]
+    ):
+        return []
+    paired = (
+        torch.rand((), generator=generator).item()
+        < conditions["local_perturbation_neighbor_probability"]
+    )
+    mask = mask.bool()
+    candidates = mask
+    if paired:
+        candidates = torch.zeros_like(mask)
+        for axis in range(3):
+            before = [slice(None)] * 3
+            after = [slice(None)] * 3
+            before[axis] = slice(None, -1)
+            after[axis] = slice(1, None)
+            before, after = tuple(before), tuple(after)
+            adjacent = mask[before] & mask[after]
+            candidates[before] |= adjacent
+            candidates[after] |= adjacent
+    positions = candidates.nonzero(as_tuple=False)
+    if positions.numel() == 0:
+        raise ValueError("Local-field perturbation needs a masked voxel pair")
+    count = int(
+        torch.randint(
+            conditions["local_perturbation_count_min"],
+            conditions["local_perturbation_count_max"] + 1,
+            (),
+            generator=generator,
+        )
+    )
+    perturbations = []
+    for _ in range(count):
+        position = tuple(
+            positions[
+                int(torch.randint(len(positions), (), generator=generator))
+            ].tolist()
+        )
+        amplitude = (
+            conditions["local_perturbation_amplitude_min"]
+            + (
+                conditions["local_perturbation_amplitude_max"]
+                - conditions["local_perturbation_amplitude_min"]
+            )
+            * torch.rand((), generator=generator).item()
+        )
+        perturbations.append((position, amplitude))
+        if paired:
+            neighbors = []
+            for offset in NEIGHBOR_OFFSETS:
+                neighbor = tuple(position[axis] + offset[axis] for axis in range(3))
+                if all(
+                    0 <= neighbor[axis] < mask.shape[axis] for axis in range(3)
+                ) and bool(mask[neighbor]):
+                    neighbors.append(neighbor)
+            neighbor = neighbors[
+                int(torch.randint(len(neighbors), (), generator=generator))
+            ]
+            perturbations.append((neighbor, -amplitude))
+    return perturbations
+
+
+def sample_target_chi_rms(generator: torch.Generator) -> float:
+    """Center physical-unit RMS near both references, with occasional strong cases."""
+    tail = bool(torch.rand((), generator=generator) < 0.05)
+    low, high = (0.04, 0.08) if tail else (0.018, 0.04)
+    fraction = float(torch.rand((), generator=generator))
+    return low * (high / low) ** fraction
+
+
 class TrainingVolumes(Dataset):
     """Cache FP32 chi and boolean masks without modifying original data files."""
 
-    def __init__(self, records, cache_dir, *, validation=False, views=1, seed=0):
+    def __init__(
+        self,
+        records,
+        cache_dir,
+        *,
+        validation=False,
+        views=1,
+        seed=0,
+        chi_scale_mode="legacy",
+    ):
         self.records = records
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.validation, self.views, self.seed = validation, views, seed
+        if chi_scale_mode not in ("legacy", "rms_mixture"):
+            raise ValueError(f"Unknown chi scale mode: {chi_scale_mode}")
+        self.chi_scale_mode = chi_scale_mode
         import multiprocessing
 
         self.epoch = multiprocessing.Value("q", 0)
@@ -228,9 +334,15 @@ class TrainingVolumes(Dataset):
         return result
 
     def __getitem__(self, index):
-        record = self.records[index // self.views]
+        # Training samplers may encode a repeated view above len(records).
+        record = self.records[
+            index // self.views if self.validation else index % len(self.records)
+        ]
+        epoch_stride = len(self) if self.chi_scale_mode == "legacy" else len(self) ** 2
         sample_seed = (
-            self.seed + index + (0 if self.validation else self.epoch.value * len(self))
+            self.seed
+            + index
+            + (0 if self.validation else self.epoch.value * epoch_stride)
         )
         generator = torch.Generator().manual_seed(sample_seed)
         loaded = self._load(record)
@@ -251,9 +363,14 @@ class TrainingVolumes(Dataset):
             if flips:
                 volume = volume.flip(flips)
             result[key] = volume.contiguous()
-        result["chi"] = result["chi"] * float(
-            torch.empty(()).uniform_(0.5, 3, generator=generator)
-        )
+        if self.chi_scale_mode == "legacy":
+            scale = float(torch.empty(()).uniform_(0.5, 3, generator=generator))
+        else:
+            chi_rms = (
+                (result["chi"].square() * result["mask"]).sum() / result["mask"].sum()
+            ).sqrt()
+            scale = sample_target_chi_rms(generator) / max(float(chi_rms), 1e-8)
+        result["chi"] = result["chi"] * scale
         result.update(seed=sample_seed, subject=record["subject"])
         return result
 
@@ -273,13 +390,22 @@ class FieldSynthesizer(torch.nn.Module):
         self.shape = tuple(shape)
 
     @torch.no_grad()
-    def forward(self, batch):
+    def forward(
+        self,
+        batch,
+        *,
+        perturb_local_field: bool = False,
+        background_mode: str = "legacy",
+        return_diagnostics: bool = False,
+    ):
+        if background_mode not in ("legacy", "ratio"):
+            raise ValueError(f"Unknown background mode: {background_mode}")
         device = self.dipole.device
         chi = batch["chi"].to(device, non_blocking=True).float()
         mask = batch["mask"].to(device, non_blocking=True).float()
         dilated = batch["dilated"].to(device, non_blocking=True)
         chi = chi * mask
-        source_fields, weights, noises, snrs = [], [], [], []
+        source_fields, weights, noises, snrs, ratios = [], [], [], [], []
         for index, seed in enumerate(batch["seed"].tolist()):
             # Independent per-sample streams make validation invariant to batch size.
             generator = torch.Generator(device=device).manual_seed(seed + 1000003)
@@ -304,6 +430,8 @@ class FieldSynthesizer(torch.nn.Module):
                 )
                 * rand()
             )
+            if background_mode == "ratio":
+                ratios.append(0.03 * (3.0 / 0.03) ** float(rand()))
             source_fields.append(exterior * (~dilated[index]) * amplitude)
             signal = chi[index]
             low = signal.masked_fill(mask[index] == 0, torch.inf).amin()
@@ -348,11 +476,32 @@ class FieldSynthesizer(torch.nn.Module):
                 .clamp_min(1e-8)
             )
 
+        if background_mode == "ratio":
+            target = torch.tensor(ratios, device=device).reshape(-1, 1, 1, 1, 1)
+            background = background * rms(local) / (rms(background) * target)
+
         noise = torch.stack(noises) * mask
         noise = (
             noise
             * rms(local)
             / (rms(noise) * torch.stack(snrs).reshape(-1, 1, 1, 1, 1))
         )
+        if perturb_local_field:
+            for index, seed in enumerate(batch["seed"].tolist()):
+                generator = torch.Generator().manual_seed(seed + 2000003)
+                for position, amplitude in _sample_local_perturbations(
+                    batch["mask"][index, 0], generator
+                ):
+                    local[(index, 0, *position)] *= amplitude
         phase = (local + background + noise) * mask
-        return phase, mask, torch.stack(weights), self.dipole, chi, background
+        result = (phase, mask, torch.stack(weights), self.dipole, chi, background)
+        if return_diagnostics:
+            diagnostics = {
+                "chi_rms": rms(chi).flatten(),
+                "local_rms": rms(local).flatten(),
+                "background_rms": rms(background).flatten(),
+                "phase_rms": rms(phase).flatten(),
+                "local_to_background": (rms(local) / rms(background)).flatten(),
+            }
+            return (*result, diagnostics)
+        return result

@@ -28,13 +28,22 @@ draws exterior-source amplitudes uniformly from 0.01 to 20 outside the
 7-voxel-dilated mask, and uses the same heteroscedastic reliability/noise model
 for both WHNet and adaptive WH-TV. These fixed conditions are written to
 `environment.json` and the training-start metrics (including Comet).
+Both training pipelines also use the sparse, training-only local-field
+perturbations described in [training.md](training.md); validation stays clean.
+Use `--no-local-perturbations` to disable them.
 
 At every validation epoch, adaptive training also evaluates the EMA model on
 the same external cases used for WHNet:
 
 - COSMOS: the newest completed SNR=100/background=10 saved simulation.
-- sim2: factor 0.264, 20-voxel centered padding, the mask bounding-box crop,
-  and the continuous dipole kernel from the legacy sim2 workflow.
+- sim2: 20-voxel centered padding, the mask bounding-box crop, and the
+  continuous dipole kernel from the legacy sim2 workflow.
+
+Both training benchmarks now pass physical-unit phase and χ to the model.
+Saved COSMOS solver-unit inputs are restored to ppm once before inference;
+sim2 uses physical units directly by default. The legacy `--sim2-factor`
+option remains accepted for checkpoint compatibility, with physical-unit
+evaluation regardless of its value.
 
 COSMOS susceptibility and background NRMSEs are logged. sim2 logs
 susceptibility NRMSE only because that dataset has no background ground truth.
@@ -83,4 +92,3 @@ parameters = output.parameters.as_dict()
 For bounded tests only, combine a short horizon with
 `--allow-short-solver`. Such runs are diagnostics and are not valid training
 configurations.
-

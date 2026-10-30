@@ -2,7 +2,9 @@ import sys
 import tempfile
 import types
 import unittest
+from dataclasses import asdict
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -12,11 +14,13 @@ from whnet.adaptive_wh_tv_validation import (
     ExternalValidationCase,
     _center_pad,
     evaluate_external_cases,
+    physical_external_cases,
 )
 from whnet.adaptive_wh_tv_training import (
     AdaptiveWHTVTrainConfig,
     RunLogger,
     _gradient_norm,
+    main as adaptive_training_main,
 )
 from whnet.physics import continuous_dipole_kernel
 from whnet.wh_tv import differentiable_wh_tv, wh_tv
@@ -29,6 +33,31 @@ class AdaptiveWHTVTests(unittest.TestCase):
 
     def setUp(self):
         torch.manual_seed(13)
+
+    def test_legacy_resume_preserves_clean_training_synthesis(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkpoint = Path(temporary) / "training_last.pt"
+            old_config = asdict(AdaptiveWHTVTrainConfig())
+            del old_config["local_perturbations"]
+            torch.save({"config": old_config}, checkpoint)
+            for extra_args, expected in (
+                ([], False),
+                (["--local-perturbations"], True),
+            ):
+                with (
+                    patch.object(
+                        sys,
+                        "argv",
+                        ["wh-tv-train", "--resume", str(checkpoint), *extra_args],
+                    ),
+                    patch(
+                        "whnet.adaptive_wh_tv_training.run_adaptive_wh_tv_training"
+                    ) as run,
+                ):
+                    adaptive_training_main()
+                    self.assertEqual(
+                        run.call_args.args[0].local_perturbations, expected
+                    )
 
     def inputs(self, shape=(8, 8, 8)):
         phase = torch.randn(1, 1, *shape) * 0.02
@@ -173,10 +202,17 @@ class AdaptiveWHTVTests(unittest.TestCase):
             background=torch.randn_like(phase) * 0.002,
             factor=0.2,
         )
+        physical_case = physical_external_cases((case,))[0]
+        self.assertEqual(physical_case.factor, 1.0)
+        torch.testing.assert_close(physical_case.phase, phase * 0.2)
+        torch.testing.assert_close(physical_case.chi, case.chi * 0.2)
+        torch.testing.assert_close(physical_case.background, case.background * 0.2)
+        torch.testing.assert_close(physical_case.mask, mask)
+        torch.testing.assert_close(physical_case.dipole, dipole)
         with tempfile.TemporaryDirectory() as temporary:
             result = evaluate_external_cases(
                 model,
-                (case,),
+                (physical_case,),
                 "cpu",
                 bf16=False,
                 output_dir=temporary,
